@@ -26,6 +26,7 @@ class Main:
 
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_UP:
+                        # self.game.tetromino.rotate()
                         print("Up Button")
                     if event.key == pygame.K_RIGHT:
                         self.game.input(1)
