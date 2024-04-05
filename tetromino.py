@@ -6,7 +6,8 @@ class Tetromino:
     def __init__(self, shape, group, create_new_tetromino, field_data):
         self.block_position = TETROMINOS[shape]['shape']
         self.color = TETROMINOS[shape]['color']
-        self.blocks = [Block(group, pos, self.color) for pos in self.block_position]
+        self.image = IMAGE_PATH + TETROMINOS[shape]['image']
+        self.blocks = [Block(group, pos, self.color, self.image) for pos in self.block_position]
         self.create_new_tetromino = create_new_tetromino
         self.field_data = field_data
 
@@ -38,11 +39,11 @@ class Tetromino:
 
 
 class Block(pygame.sprite.Sprite):
-    def __init__(self, group, pos, color):
+    def __init__(self, group, pos, color, image):
         super().__init__(group)
         self.image = pygame.Surface((PIXEL, PIXEL))
-        self.image.fill(color)
-        # self.image = pygame.image.load("./shape.png")
+        self.image = pygame.image.load(image)
+        self.image = pygame.transform.scale(self.image, (PIXEL, PIXEL))
         self.pos = pygame.Vector2(pos) + pygame.Vector2(COL // 2 - 1, -1)
 
         self.rect = self.image.get_rect(topleft = self.pos * PIXEL)
