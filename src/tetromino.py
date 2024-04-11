@@ -1,20 +1,23 @@
+from numpy import block
 import pygame
 from settings import *
 
 
 class Tetromino:
     def __init__(self, shape, group, create_new_tetromino, field_data):
-        self.block_position = TETROMINOS[shape]['shape']
-        self.color = TETROMINOS[shape]['color']
-        self.image = IMAGE_PATH + TETROMINOS[shape]['image']
-        self.blocks = [Block(group, pos, self.color, self.image) for pos in self.block_position]
+        self.shape = shape
+        self.block_position = TETROMINOS[shape]["shape"]
+        self.color = TETROMINOS[shape]["color"]
+        self.image = BLOCK_IMG_DIR + "/" + TETROMINOS[shape]["image"]
+        self.blocks = [
+            Block(group, pos, self.color, self.image) for pos in self.block_position
+        ]
         self.create_new_tetromino = create_new_tetromino
         self.field_data = field_data
 
-
     def move_down(self):
         if self.check_vertical_collision(1):
-            print(f'Vertical Collision')
+            # print(f"Vertical Collision")
             for block in self.blocks:
                 self.field_data[int(block.pos.y)][int(block.pos.x)] = block
             self.create_new_tetromino()
@@ -24,18 +27,48 @@ class Tetromino:
 
     def move_horizontal(self, amount):
         if self.check_horizontal_collision(amount):
-            print(f'Horizontal Collision')
+            return
+            # print(f"Horizontal Collision")
         else:
             for block in self.blocks:
                 block.pos.x += amount
 
     def check_horizontal_collision(self, amount):
-        collision_list = [block.horizontal_collide(int(block.pos.x + amount), self.field_data) for block in self.blocks]
+        collision_list = [
+            block.horizontal_collide(int(block.pos.x + amount), self.field_data)
+            for block in self.blocks
+        ]
         return True if sum(collision_list) else False
 
     def check_vertical_collision(self, amount):
-        collision_list = [block.vertical_collide(int(block.pos.y + amount), self.field_data) for block in self.blocks]
+        collision_list = [
+            block.vertical_collide(int(block.pos.y + amount), self.field_data)
+            for block in self.blocks
+        ]
         return True if sum(collision_list) else False
+
+    def rotate(self):
+        if self.shape != "O":
+            pivot_pos = self.blocks[0].pos  # pivot point
+            # new block position after rotating
+            new_block_position = [block.rotate(pivot_pos) for block in self.blocks]
+
+            # check collision
+            for pos in new_block_position:
+                # horizontal
+                if pos.x < 0 or pos.x >= COL:
+                    return
+
+                # field check (with other pieces)
+                if self.field_data[int(pos.y)][int(pos.x)]:
+                    return
+
+                # vertical / floor
+                if pos.y > ROW:
+                    return
+
+            for i, block in enumerate(self.blocks):
+                block.pos = new_block_position[i]
 
 
 class Block(pygame.sprite.Sprite):
@@ -46,7 +79,10 @@ class Block(pygame.sprite.Sprite):
         self.image = pygame.transform.scale(self.image, (PIXEL, PIXEL))
         self.pos = pygame.Vector2(pos) + pygame.Vector2(COL // 2 - 1, -1)
 
-        self.rect = self.image.get_rect(topleft = self.pos * PIXEL)
+        self.rect = self.image.get_rect(topleft=self.pos * PIXEL)
+
+    def rotate(self, pivot_pos):
+        return pivot_pos + (self.pos - pivot_pos).rotate(90)
 
     def update(self):
         self.rect.topleft = self.pos * PIXEL
@@ -56,14 +92,14 @@ class Block(pygame.sprite.Sprite):
             return True
         if field_data[int(self.pos.y)][target]:
             return True
-        
+
         return False
-    
+
     def vertical_collide(self, target: int, field_data):
         if target >= ROW:
             return True
-        
+
         if target >= 0 and field_data[target][int(self.pos.x)]:
             return True
-        
+
         return False
