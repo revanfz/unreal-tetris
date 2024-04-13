@@ -28,8 +28,7 @@ class Matrix:
         # self.field_data = zeros((ROW, COL), dtype=uint8)
         self.field_data = [[0 for x in range(COL)] for y in range(ROW)]
         self.tetromino = Tetromino(
-            'I',
-            # choice(list(TETROMINOS.keys())),
+            choice(list(TETROMINOS.keys())),
             self.sprites,
             self.create_new_tetromino,
             self.field_data,

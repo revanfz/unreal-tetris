@@ -17,8 +17,8 @@ class Tetris:
         self.clock = pygame.time.Clock()
         pygame.display.set_caption("Tetris Smart Agent")
 
-        self.next_shapes = ['I' for shape in range(3)]
-        # self.next_shapes = [choice(list(TETROMINOS.keys())) for shape in range(3)]
+        # self.next_shapes = ['I' for shape in range(3)]
+        self.next_shapes = [choice(list(TETROMINOS.keys())) for shape in range(3)]
         # print(self.next_shapes)
 
         self.game = Matrix(self.get_next_shape, self.update_score)
@@ -34,8 +34,8 @@ class Tetris:
 
     def get_next_shape(self):
         next_shape = self.next_shapes.pop(0)
-        self.next_shapes.append('I')
-        # self.next_shapes.append(choice(list(TETROMINOS.keys())))
+        # self.next_shapes.append('I')
+        self.next_shapes.append(choice(list(TETROMINOS.keys())))
         return next_shape
 
     def run(self):
