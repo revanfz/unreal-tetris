@@ -1,6 +1,5 @@
-from numpy import block
 import pygame
-from settings import *
+from .settings import *
 
 
 class Tetromino:
@@ -15,12 +14,22 @@ class Tetromino:
         self.create_new_tetromino = create_new_tetromino
         self.field_data = field_data
 
+        self.game_over = False
+
+    def set_game_over(self):
+        self.game_over = True
+
     def move_down(self):
         if self.check_vertical_collision(1):
             # print(f"Vertical Collision")
             for block in self.blocks:
                 self.field_data[int(block.pos.y)][int(block.pos.x)] = block
-            self.create_new_tetromino()
+
+            if self.check_ceiling_collision():
+                self.set_game_over()
+                print("Game Over")
+            else:
+                self.create_new_tetromino()
         else:
             for block in self.blocks:
                 block.pos.y += 1
@@ -47,6 +56,13 @@ class Tetromino:
         ]
         return True if sum(collision_list) else False
 
+    def check_ceiling_collision(self):
+        for blocks in self.blocks:
+            if blocks.pos.y <= 0:
+                return True
+
+        return False
+
     def rotate(self):
         if self.shape != "O":
             pivot_pos = self.blocks[0].pos  # pivot point
@@ -59,12 +75,12 @@ class Tetromino:
                 if pos.x < 0 or pos.x >= COL:
                     return
 
+                # vertical / floor
+                if pos.y >= ROW:
+                    return
+                
                 # field check (with other pieces)
                 if self.field_data[int(pos.y)][int(pos.x)]:
-                    return
-
-                # vertical / floor
-                if pos.y > ROW:
                     return
 
             for i, block in enumerate(self.blocks):

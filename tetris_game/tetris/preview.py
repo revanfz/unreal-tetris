@@ -1,8 +1,7 @@
-from networkx import center
 import pygame
-from settings import *
 
 from os import path
+from .settings import *
 from pygame.image import load
 from pygame.transform import scale_by
 
@@ -30,7 +29,7 @@ class Preview:
             shape_surface = self.shape_surfaces[shape]
             x = self.surface.get_width() / 2
             y = self.fragment_height / 2 + i * self.fragment_height
-            rect = shape_surface.get_rect(center = (x, y))
+            rect = shape_surface.get_rect(center=(x, y))
             self.surface.blit(shape_surface, rect)
 
     def run(self, next_shapes):

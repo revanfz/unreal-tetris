@@ -14,7 +14,7 @@ FALL_SPEED = 250
 ROTATE_WAIT_TIME = 50
 MOVE_WAIT_TIME = 30
 
-IMG_DIR = "assets/img"
+IMG_DIR = "tetris_game/assets/img"
 BLOCK_IMG_DIR = IMG_DIR + "/block"
 TETROMINOS_IMG_DIR = IMG_DIR + "/tetrominos"
 

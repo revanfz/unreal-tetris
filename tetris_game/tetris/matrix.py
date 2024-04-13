@@ -1,9 +1,9 @@
-from random import choice
 import pygame
-from settings import *
-from tetromino import Tetromino
-from timer import Timer
-
+from .settings import *
+from .tetromino import Tetromino
+from .timer import Timer
+from numpy import uint8, zeros
+from random import choice
 
 class Matrix:
     def __init__(self, get_next_shape, update_score):
@@ -23,10 +23,13 @@ class Matrix:
         self.current_level = 1
         self.current_scores = 0
         self.current_lines = 0
+        self.block_placed = 0
 
+        # self.field_data = zeros((ROW, COL), dtype=uint8)
         self.field_data = [[0 for x in range(COL)] for y in range(ROW)]
         self.tetromino = Tetromino(
-            choice(list(TETROMINOS.keys())),
+            'I',
+            # choice(list(TETROMINOS.keys())),
             self.sprites,
             self.create_new_tetromino,
             self.field_data,
@@ -35,7 +38,7 @@ class Matrix:
         self.down_speed = FALL_SPEED
         self.down_speed_faster = self.down_speed * 0.3
         self.speedup = False
-        
+
         self.timers = {
             "verticalMove": Timer(self.down_speed, True, self.move_down),
             "horizontalMove": Timer(MOVE_WAIT_TIME),
@@ -51,11 +54,13 @@ class Matrix:
             self.current_level += 1
             self.down_speed *= 0.75
             self.down_speed_faster = self.down_speed * 0.3
-            self.timers['vertaocal move'].duration = self.down_speed
+            self.timers["vertaocal move"].duration = self.down_speed
 
         self.update_score(self.current_lines, self.current_scores, self.current_level)
 
     def create_new_tetromino(self):
+        self.speedup = False
+        self.block_placed += 1
         self.check_finished_row()
         self.tetromino = Tetromino(
             self.get_next_shape(),

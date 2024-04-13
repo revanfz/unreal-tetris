@@ -2,7 +2,7 @@ from pygame.time import get_ticks
 
 
 class Timer:
-    def __init__(self, duration, repeated = False, func = None):
+    def __init__(self, duration, repeated=False, func=None):
         self.repeated = repeated
         self.duration = duration
         self.func = func
