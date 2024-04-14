@@ -16,12 +16,39 @@ class Tetromino:
 
         self.game_over = False
 
+    def drop_shape(self):
+        # y baris, x kolom
+        lowest_row_dict = {}
+
+        for block in self.blocks:
+            # ekstrak nilai baris tertinggi yang berisi pada setiap kolom
+            if (
+                block.pos.x not in lowest_row_dict
+                or block.pos.y > lowest_row_dict[block.pos.x]
+            ):
+                lowest_row_dict[block.pos.x] = block.pos.y
+
+        # mapping jarak dari baris yang sudah terisi dengan shape yang akan turun
+        distance_dict = {}
+        for item in set(block.pos.x for block in self.blocks):
+            temp = next(
+                (i for i, row in enumerate(self.field_data) if row[int(item)] != 0),
+                20,
+            )
+            if temp is not None:
+                distance_dict[item] = temp - lowest_row_dict[item]
+
+        # mengambil jarak yang terdekat untuk collision
+        distance = min(distance_dict.values())
+
+        for block in self.blocks:
+            block.pos.y += distance - 1
+
     def set_game_over(self):
         self.game_over = True
 
     def move_down(self):
         if self.check_vertical_collision(1):
-            # print(f"Vertical Collision")
             for block in self.blocks:
                 self.field_data[int(block.pos.y)][int(block.pos.x)] = block
 
@@ -37,7 +64,6 @@ class Tetromino:
     def move_horizontal(self, amount):
         if self.check_horizontal_collision(amount):
             return
-            # print(f"Horizontal Collision")
         else:
             for block in self.blocks:
                 block.pos.x += amount
@@ -78,7 +104,7 @@ class Tetromino:
                 # vertical / floor
                 if pos.y >= ROW:
                     return
-                
+
                 # field check (with other pieces)
                 if self.field_data[int(pos.y)][int(pos.x)]:
                     return

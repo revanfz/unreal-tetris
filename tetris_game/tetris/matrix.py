@@ -27,6 +27,7 @@ class Matrix:
 
         # self.field_data = zeros((ROW, COL), dtype=uint8)
         self.field_data = [[0 for x in range(COL)] for y in range(ROW)]
+
         self.tetromino = Tetromino(
             choice(list(TETROMINOS.keys())),
             self.sprites,
@@ -35,7 +36,7 @@ class Matrix:
         )
 
         self.down_speed = FALL_SPEED
-        self.down_speed_faster = self.down_speed * 0.3
+        self.down_speed_faster = self.down_speed * 0.25
         self.speedup = False
 
         self.timers = {
@@ -45,6 +46,9 @@ class Matrix:
         }
         self.timers["verticalMove"].activate()
 
+    def drop(self):
+        self.tetromino.drop_shape()
+
     def calculate_score(self, num_lines):
         self.current_lines += num_lines
         self.current_scores += CLEAR_REWARDS[num_lines] * self.current_level
@@ -52,12 +56,13 @@ class Matrix:
         if self.current_lines % 10 == 0 and self.current_lines > 0:
             self.current_level += 1
             self.down_speed *= 0.75
-            self.down_speed_faster = self.down_speed * 0.3
-            self.timers["vertaocal move"].duration = self.down_speed
+            self.down_speed_faster = self.down_speed * 0.25
+            self.timers["verticalMove"].duration = self.down_speed
 
         self.update_score(self.current_lines, self.current_scores, self.current_level)
 
     def create_new_tetromino(self):
+        self.timers["verticalMove"].duration = self.down_speed
         self.speedup = False
         self.block_placed += 1
         self.check_finished_row()
@@ -67,7 +72,6 @@ class Matrix:
             self.create_new_tetromino,
             self.field_data,
         )
-        # self.tetromino = Tetromino(choice(list(TETROMINOS.keys())), self.sprites, self.create_new_tetromino, self.field_data)
 
     def timer_update(self):
         for timer in self.timers.values():
