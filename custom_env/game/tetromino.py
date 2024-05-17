@@ -14,7 +14,6 @@ class Tetromino:
         ]
         self.create_new_tetromino = create_new_tetromino
         self.field_data = field_data
-
         self.game_over = False
 
     def soft_drop(self):

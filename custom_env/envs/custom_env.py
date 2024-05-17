@@ -42,13 +42,12 @@ class TetrisEnv(gym.Env):
 
         self.observation_space = Dict(
             {
-                "matrix_image": Box(low=0, high=255, shape=(MATRIX_WIDTH + PIXEL * 2, MATRIX_HEIGHT + PIXEL * 2, 3), dtype=np.uint8),
-                # "lines_cleared": Box(low=0, high=np.inf, shape=(1,), dtype=np.float32),
-                # "holes": Box(low=0, high=9, shape=(COL,)),
-                # "quadratic_unevenness": Box(low=0, high=981, shape=(1,), dtype=np.float32),
-                # "sum_height": Box(low=0, high=100, shape=(1,), dtype=np.float32),
-                # "current_shape": Box(low=1, high=7, shape=(1,), dtype=np.float32),
-                # "next_shape": Box(low=1, high=7, shape=(3,), dtype=np.float32),
+                "matrix_image": Box(
+                    low=0,
+                    high=255,
+                    shape=(MATRIX_WIDTH + PIXEL * 2, MATRIX_HEIGHT + PIXEL * 2, 3),
+                    dtype=np.uint8,
+                )
             }
         )
         self.action_space = Discrete(7)
@@ -101,33 +100,65 @@ class TetrisEnv(gym.Env):
             holes = 0
             if max_row != 0:
                 for row in range(len(self.game.field_data) - 1, 20 - max_row, -1):
-                    if not self.game.field_data[row][col]:
+                    if not self.game.field_data[row][col] and self.game.field_data[row-1][col]:
                         holes += 1
             holes_per_col.append(holes)
 
         return holes_per_col
 
-    def calculate_unevenness(self, max_rows):
-        unevenness = 0
-        for i in range(len(max_rows) - 1):
-            # beda_absolute = abs(max_rows[i + 1] - max_rows[i])
-            beda_absolute = (max_rows[i + 1] - max_rows[i]) ** 2
-            unevenness += beda_absolute
+    def count_transitions(self):
+        col_transition = 0
+        for col in range(len(self.game.field_data[0])):
+            for row in range(len(self.game.field_data) - 1):
+                if row == len(self.game.field_data):
+                    break
+                elif bool(self.game.field_data[row + 1][col]) ^ bool(
+                    self.game.field_data[row][col]
+                ):
+                    col_transition += 1
 
-        return unevenness
+        row_transition = 0
+        for row in range(len(self.game.field_data)):
+            for col in range(len(self.game.field_data[0]) - 1):
+                if col == len(self.game.field_data[0]):
+                    break
+                elif bool(self.game.field_data[row][col + 1]) ^ bool(
+                    self.game.field_data[row][col]
+                ):
+                    row_transition += 1
+
+        return (row_transition, col_transition)
+
+    def count_wells(self):
+        wells = 0
+        for col in range(len(self.game.field_data[0]) - 1):
+            for row in range(len(self.game.field_data)):
+                cell = self.game.field_data[row][col]
+                if col == 0:
+                    if not cell and self.game.field_data[row][col+1]:
+                        wells += 1
+                elif col == range(len(self.game.field_data[0]) - 1):
+                    if not cell and self.game.field_data[row][col-1]:
+                        wells += 1
+                else:
+                    if not cell and self.game.field_data[row][col+1] and self.game.field_data[row][col-1]:
+                        wells += 1
+
+        return wells
 
     def _get_info(self):
         col_heights = self.find_col_heights()
-        sum_height = sum(col_heights)
         holes = self.calculate_holes(col_heights)
-        unevenness = self.calculate_unevenness(col_heights)
         lines_cleared = self.game.last_deleted_rows
+        row_transition, col_transition = self.count_transitions()
+        cumulated_wells = self.count_wells()
 
         return {
             "lines_cleared": lines_cleared,
-            "sum_height": sum_height,
+            "row_transitions": row_transition,
+            "col_transitions": col_transition,
             "holes": sum(holes),
-            "quadratic_unevenness": unevenness,
+            "cumulative_wells": cumulated_wells,
         }
 
     def _get_obs(self):
@@ -154,7 +185,7 @@ class TetrisEnv(gym.Env):
 
         if self.render_mode == "human":
             self._render_frame()
-        
+
         info = self._get_info()
         observation = self._get_obs()
 
@@ -184,7 +215,6 @@ class TetrisEnv(gym.Env):
         if action == 6:  # drop
             self.game.drop()
 
-                
         if self.render_mode == "human":
             self._render_frame()
 
@@ -196,17 +226,14 @@ class TetrisEnv(gym.Env):
         return observation, reward, self.game.tetromino.game_over, False, info
 
     def evaluate(self, info):
-        reward = self.game.block_placed
-        reward -= 0.01 * info["sum_height"]
-        reward -= info["holes"] * 0.5 - info["quadratic_unevenness"] * 0.5
-        if self.game.tetromino.game_over:
-            reward = -100
-        else:
-            if self.game.last_block_placed != self.game.block_placed:
-                reward += 10
-                if self.game.last_deleted_rows > 0:
-                    reward += CLEAR_REWARDS[self.game.last_deleted_rows] ** 2
-                self.game.last_block_placed = self.game.block_placed
+        reward = (
+            -4 * info["holes"]
+            - info["cumulative_wells"]
+            - info["row_transitions"]
+            - info["col_transitions"]
+            - self.game.last_landing_height
+            + (info["lines_cleared"] ** 2)
+        )
 
         return reward
 
@@ -243,17 +270,23 @@ class TetrisEnv(gym.Env):
                 self.clock.tick(self.metadata["render_fps"])
 
                 # if self.game.last_block_placed != self.game.block_placed:
-                matrix_screen = canvas.subsurface(pygame.Rect(0, 0, MATRIX_WIDTH + PIXEL * 2, MATRIX_HEIGHT + PIXEL * 2))
-                preview_screen = canvas.subsurface(pygame.Rect(MATRIX_WIDTH + PIXEL, 0, SIDEBAR_WIDTH + PIXEL*2, PREVIEW_HEIGHT * WINDOW_HEIGHT + PIXEL))
-
-                self.matrix_screen_array = pygame.surfarray.array3d(matrix_screen)
-                self.preview_screen_array = pygame.surfarray.array3d(preview_screen)
-                
-                return (self.matrix_screen_array, self.preview_screen_array)
-            else:  # rgb_array
-                return np.transpose(
-                    np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2)
+               
+            matrix_screen = canvas.subsurface(
+                pygame.Rect(
+                    0, 0, MATRIX_WIDTH + PIXEL * 2, MATRIX_HEIGHT + PIXEL * 2
                 )
+            )
+            preview_screen = canvas.subsurface(
+                pygame.Rect(
+                    MATRIX_WIDTH + PIXEL,
+                    0,
+                    SIDEBAR_WIDTH + PIXEL * 2,
+                    PREVIEW_HEIGHT * WINDOW_HEIGHT + PIXEL,
+                )
+            )
+
+            self.matrix_screen_array = pygame.surfarray.array3d(matrix_screen)
+            self.preview_screen_array = pygame.surfarray.array3d(preview_screen)
         except KeyboardInterrupt:
             print("Closing the window...")
             pygame.quit()

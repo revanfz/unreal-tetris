@@ -18,6 +18,7 @@ class Matrix:
         self.block_placed = 0
         self.last_block_placed = 0
         self.last_deleted_rows = 0
+        self.last_landing_height = 0
 
         # self.field_data = zeros((ROW, COL), dtype=uint8)
         self.field_data = [[0 for x in range(COL)] for y in range(ROW)]
@@ -64,6 +65,12 @@ class Matrix:
     def create_new_tetromino(self):
         self.timers["verticalMove"].duration = self.down_speed
         self.speedup = False
+        landing_height = 0
+        for block in self.tetromino.blocks:
+            row = block.pos.y
+            if row > landing_height:
+                landing_height = row
+        self.last_landing_height = landing_height
         self.block_placed += 1
         self.check_finished_row()
         self.tetromino = Tetromino(
