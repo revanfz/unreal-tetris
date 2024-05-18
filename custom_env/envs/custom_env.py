@@ -100,7 +100,10 @@ class TetrisEnv(gym.Env):
             holes = 0
             if max_row != 0:
                 for row in range(len(self.game.field_data) - 1, 20 - max_row, -1):
-                    if not self.game.field_data[row][col] and self.game.field_data[row-1][col]:
+                    if (
+                        not self.game.field_data[row][col]
+                        and self.game.field_data[row - 1][col]
+                    ):
                         holes += 1
             holes_per_col.append(holes)
 
@@ -135,13 +138,17 @@ class TetrisEnv(gym.Env):
             for row in range(len(self.game.field_data)):
                 cell = self.game.field_data[row][col]
                 if col == 0:
-                    if not cell and self.game.field_data[row][col+1]:
+                    if not cell and self.game.field_data[row][col + 1]:
                         wells += 1
                 elif col == range(len(self.game.field_data[0]) - 1):
-                    if not cell and self.game.field_data[row][col-1]:
+                    if not cell and self.game.field_data[row][col - 1]:
                         wells += 1
                 else:
-                    if not cell and self.game.field_data[row][col+1] and self.game.field_data[row][col-1]:
+                    if (
+                        not cell
+                        and self.game.field_data[row][col + 1]
+                        and self.game.field_data[row][col - 1]
+                    ):
                         wells += 1
 
         return wells
@@ -183,8 +190,7 @@ class TetrisEnv(gym.Env):
         self.score = Score()
         self.preview = Preview()
 
-        if self.render_mode == "human":
-            self._render_frame()
+        self.render()
 
         info = self._get_info()
         observation = self._get_obs()
@@ -215,8 +221,7 @@ class TetrisEnv(gym.Env):
         if action == 6:  # drop
             self.game.drop()
 
-        if self.render_mode == "human":
-            self._render_frame()
+        self.render()
 
         info = self._get_info()
         observation = self._get_obs()
@@ -234,11 +239,10 @@ class TetrisEnv(gym.Env):
             - self.game.last_landing_height
             + (info["lines_cleared"] ** 2)
         )
-
         return reward
 
     def render(self):
-        if self.render_mode == "rgb_array":
+        if self.render_mode == "rgb_array" or self.render_mode == "human":
             return self._render_frame()
 
     def _render_frame(self):
@@ -269,24 +273,20 @@ class TetrisEnv(gym.Env):
                 pygame.display.update()
                 self.clock.tick(self.metadata["render_fps"])
 
-                # if self.game.last_block_placed != self.game.block_placed:
-               
             matrix_screen = canvas.subsurface(
-                pygame.Rect(
-                    0, 0, MATRIX_WIDTH + PIXEL * 2, MATRIX_HEIGHT + PIXEL * 2
-                )
+                pygame.Rect(0, 0, MATRIX_WIDTH + PIXEL * 2, MATRIX_HEIGHT + PIXEL * 2)
             )
-            preview_screen = canvas.subsurface(
-                pygame.Rect(
-                    MATRIX_WIDTH + PIXEL,
-                    0,
-                    SIDEBAR_WIDTH + PIXEL * 2,
-                    PREVIEW_HEIGHT * WINDOW_HEIGHT + PIXEL,
-                )
-            )
+            # preview_screen = canvas.subsurface(
+            #     pygame.Rect(
+            #         MATRIX_WIDTH + PIXEL,
+            #         0,
+            #         SIDEBAR_WIDTH + PIXEL * 2,
+            #         PREVIEW_HEIGHT * WINDOW_HEIGHT + PIXEL,
+            #     )
+            # )
 
             self.matrix_screen_array = pygame.surfarray.array3d(matrix_screen)
-            self.preview_screen_array = pygame.surfarray.array3d(preview_screen)
+            # self.preview_screen_array = pygame.surfarray.array3d(preview_screen)
         except KeyboardInterrupt:
             print("Closing the window...")
             pygame.quit()

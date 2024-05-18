@@ -6,10 +6,6 @@ import torch.nn.functional as F
 class ActorCritic(nn.Module):
     def __init__(self, num_inputs, num_actions):
         super(ActorCritic, self).__init__()
-        # self.conv1 = nn.Conv2d(num_inputs, 32, 3, stride=2, padding=1)
-        # self.conv2 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
-        # self.conv3 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
-        # self.conv4 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
         self.conv1 = nn.Conv2d(num_inputs, 16, 8, stride=4, padding=1)
         self.conv2 = nn.Conv2d(16, 32, 4, stride=2, padding=1)
         self.lstm = nn.LSTMCell(32 * 10 * 10, 512)
@@ -29,8 +25,5 @@ class ActorCritic(nn.Module):
     def forward(self, x, hx, cx):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
-        # x = F.relu(self.conv3(x))
-        # x = F.relu(self.conv4(x))
-        # hx, cx = self.lstm(x.view(-1, 32 * 6 * 6), (hx, cx))
         hx, cx = self.lstm(x.view(-1, 32 * 10 * 10), (hx, cx))
         return self.actor(hx), self.critic(hx), hx, cx

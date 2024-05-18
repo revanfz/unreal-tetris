@@ -28,7 +28,7 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
     if timestamp:
         start_time = timeit.default_timer()
     writer = SummaryWriter(opt.log_path)
-    env = gym.make("SmartTetris-v0", render_mode="human")
+    env = gym.make("SmartTetris-v0", render_mode=opt.render_mode)
     local_model = ActorCritic(1, env.action_space.n)
     if torch.cuda.is_available():
         local_model.cuda()
@@ -38,7 +38,6 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
     if torch.cuda.is_available():
         state = state.cuda()
     done = True
-    curr_step = 0
     curr_episode = 0
     while True:
         if timestamp:
@@ -47,7 +46,9 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
                     global_model.state_dict(), "{}/a3c_tetris".format(opt.model_path)
                 )
         local_model.load_state_dict(global_model.state_dict())
+
         if done:
+            writer.add_scalar("Score_Agent {}".format(index), sum(rewards) / len(rewards), )
             hx = torch.zeros((1, 512), dtype=torch.float)
             cx = torch.zeros((1, 512), dtype=torch.float)
         else:
@@ -63,7 +64,6 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
         entropies = []
 
         for _ in range(opt.sync_steps):
-            curr_step += 1
             policy, value, hx, cx = local_model(state, hx, cx)
             probs = F.softmax(policy, dim=1)
             log_prob = F.log_softmax(policy, dim=1)
@@ -78,7 +78,6 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
                 state = state.cuda()
 
             if done:
-                curr_step = 0
                 curr_episode += 1
                 state, info = env.reset()
                 state = torch.from_numpy(transformImage(state["matrix_image"]))
@@ -103,25 +102,27 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
         advantage = torch.zeros((1, 1), dtype=torch.float)
         if torch.cuda.is_available():
             advantage = advantage.cuda()
+
         actor_loss = 0
         critic_loss = 0
         entropy_loss = 0
-        next_value = advantage
+        next_value = R
 
-        for value, log_prob, reward, entropy in list(
+        for value, log_policy, reward, entropy in list(
             zip(values, log_probs, rewards, entropies)
         )[::-1]:
-            advantage = (
-                advantage + reward * opt.gamma * next_value.detach() - value.detach()
-            )
+            advantage = advantage * opt.gamma
+            td_error = next_value.detach() - value.detach()
+            advantage = advantage + reward + opt.gamma * td_error
             next_value = value
-            actor_loss = actor_loss + log_prob * advantage
-            advantage = advantage * opt.gamma * reward
-            critic_loss = critic_loss + (advantage - value) ** 2 / 2
+            actor_loss = actor_loss + log_policy * advantage
+            R = R * opt.gamma + reward
+            critic_loss = critic_loss + (R - value) ** 2 / 2
             entropy_loss = entropy_loss + entropy
 
         total_loss = -actor_loss + critic_loss - opt.beta * entropy_loss
-        writer.add_scalar("Train_{}/Loss".format(index), total_loss, curr_episode)
+        writer.add_scalar("Train_Agent {}/Loss".format(index), total_loss, curr_episode)
+        writer.add_scalar("Score_Agent {}".format(index), sum(rewards), curr_episode)
         optimizer.zero_grad()
         total_loss.backward()
 
@@ -150,9 +151,7 @@ def local_test(index, opt, global_model):
     state, info = env.reset()
     state = torch.from_numpy(transformImage(state["matrix_image"]))
     done = True
-    curr_step = 0
     while True:
-        curr_step += 1
         if done:
             local_model.load_state_dict(global_model.state_dict())
         with torch.no_grad():
@@ -163,12 +162,12 @@ def local_test(index, opt, global_model):
                 hx = hx.detach()
                 cx = cx.detach()
 
-        logits, value, hx, cx = local_model(state, hx, cx)
-        policy = F.softmax(logits, dim=1)
-        action = torch.argmax(policy).item()
+        policy, value, hx, cx = local_model(state, hx, cx)
+        probs = F.softmax(policy, dim=1)
+        print(probs)
+        action = torch.argmax(probs).item()
         state, reward, done, _, info = env.step(action)
         env.render()
         if done:
-            curr_step = 0
             state, info = env.reset()
         state = torch.from_numpy(transformImage(state["matrix_image"]))
