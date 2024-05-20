@@ -12,6 +12,5 @@ class SharedAdam(optim.Adam):
                 state["exp_avg"] = torch.zeros_like(p.data)
                 state["exp_avg_sq"] = torch.zeros_like(p.data)
 
-                state["step"].share_memory_()
                 state["exp_avg"].share_memory_()
                 state["exp_avg_sq"].share_memory_()

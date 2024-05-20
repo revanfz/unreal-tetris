@@ -85,8 +85,14 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
 
             if done:
                 curr_episode += 1
-                writer.add_scalar("Score_Agent {}".format(index), info["score"], curr_episode)
-                writer.add_scalar("Lines Cleared_Agent {}".format(index), info["lines_cleared"], curr_episode)
+                writer.add_scalar(
+                    "Score_Agent {}".format(index), info["score"], curr_episode
+                )
+                writer.add_scalar(
+                    "Lines Cleared_Agent {}".format(index),
+                    info["lines_cleared"],
+                    curr_episode,
+                )
                 state, info = env.reset()
                 state = transformImage(state["matrix_image"])
                 if torch.cuda.is_available():
