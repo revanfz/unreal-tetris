@@ -1,8 +1,10 @@
 import torch
 import timeit
-import torchvision.transforms as T
+import pygame
 import gymnasium as gym
 import torch.nn.functional as F
+import torchvision.transforms as T
+import torchvision.utils as utils
 
 import custom_env
 
@@ -14,13 +16,16 @@ from torch.distributions import Categorical
 def transformImage(image):
     transform = T.Compose(
         [
-            T.transforms.ToTensor(),
-            T.transforms.Grayscale(num_output_channels=1),
-            T.transforms.Resize((84, 84)),
+            T.ToTensor(),
+            T.Grayscale(num_output_channels=1),
+            T.Resize((84, 84)),
         ]
     )
 
-    return transform(image).numpy()
+    image = transform(image)
+    utils.save_image(image, "test.jpg")
+
+    return image
 
 
 def local_train(index, opt, global_model, optimizer, timestamp=False):
@@ -34,7 +39,7 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
         local_model.cuda()
     local_model.train()
     state, info = env.reset()
-    state = torch.from_numpy(transformImage(state["matrix_image"]))
+    state = transformImage(state["matrix_image"])
     if torch.cuda.is_available():
         state = state.cuda()
     done = True
@@ -48,9 +53,8 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
         local_model.load_state_dict(global_model.state_dict())
 
         if done:
-            writer.add_scalar("Score_Agent {}".format(index), sum(rewards) / len(rewards), )
-            hx = torch.zeros((1, 512), dtype=torch.float)
-            cx = torch.zeros((1, 512), dtype=torch.float)
+            hx = torch.zeros((1, 256), dtype=torch.float)
+            cx = torch.zeros((1, 256), dtype=torch.float)
         else:
             hx = hx.detach()
             cx = cx.detach()
@@ -73,16 +77,9 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
             action = m.sample().item()
 
             state, reward, done, _, info = env.step(action)
-            state = torch.from_numpy(transformImage(state["matrix_image"]))
+            state = transformImage(state["matrix_image"])
             if torch.cuda.is_available():
                 state = state.cuda()
-
-            if done:
-                curr_episode += 1
-                state, info = env.reset()
-                state = torch.from_numpy(transformImage(state["matrix_image"]))
-                if torch.cuda.is_available():
-                    state = state.cuda()
 
             values.append(value)
             log_probs.append(log_prob[0, action])
@@ -90,7 +87,17 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
             entropies.append(entropy)
 
             if done:
+                curr_episode += 1
+                writer.add_scalar("Score_Agent {}".format(index), info["score"], curr_episode)
+                writer.add_scalar("Lines Cleared_Agent {}".format(index), info["lines_cleared"], curr_episode)
+                state, info = env.reset()
+                state = transformImage(state["matrix_image"])
+                if torch.cuda.is_available():
+                    state = state.cuda()
+
+            if done:
                 print("Process {}. Episode {}".format(index, curr_episode))
+                print("Rewards {}, Episode {}".format(sum(rewards), curr_episode))
                 break
 
         R = torch.zeros((1, 1), dtype=torch.float)
@@ -122,7 +129,6 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
 
         total_loss = -actor_loss + critic_loss - opt.beta * entropy_loss
         writer.add_scalar("Train_Agent {}/Loss".format(index), total_loss, curr_episode)
-        writer.add_scalar("Score_Agent {}".format(index), sum(rewards), curr_episode)
         optimizer.zero_grad()
         total_loss.backward()
 
@@ -149,25 +155,24 @@ def local_test(index, opt, global_model):
     local_model = ActorCritic(1, env.action_space.n)
     local_model.eval()
     state, info = env.reset()
-    state = torch.from_numpy(transformImage(state["matrix_image"]))
+    state = transformImage(state["matrix_image"])
     done = True
     while True:
         if done:
             local_model.load_state_dict(global_model.state_dict())
         with torch.no_grad():
             if done:
-                hx = torch.zeros((1, 512), dtype=torch.float)
-                cx = torch.zeros((1, 512), dtype=torch.float)
+                hx = torch.zeros((1, 256), dtype=torch.float)
+                cx = torch.zeros((1, 256), dtype=torch.float)
             else:
                 hx = hx.detach()
                 cx = cx.detach()
 
         policy, value, hx, cx = local_model(state, hx, cx)
         probs = F.softmax(policy, dim=1)
-        print(probs)
         action = torch.argmax(probs).item()
         state, reward, done, _, info = env.step(action)
         env.render()
         if done:
             state, info = env.reset()
-        state = torch.from_numpy(transformImage(state["matrix_image"]))
+        state = transformImage(state["matrix_image"])

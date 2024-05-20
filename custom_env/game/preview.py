@@ -17,16 +17,15 @@ class Preview:
             rect = shape_surface.get_rect(center=(x, y))
             surface.blit(shape_surface, rect)
 
-    def run(self, next_shapes, display_surface, is_training=False):
+    def run(self, next_shapes, display_surface):
         shape_surfaces = {
             shape: scale_by(
                 pygame.image.load(TETROMINOS_IMG_DIR + f"/{shape}.png"), 0.1
             )
             for shape in TETROMINOS.keys()
         }
-        height = PREVIEW_TRAINING_HEIGHT if is_training else PREVIEW_HEIGHT
         surface = pygame.Surface(
-            (SIDEBAR_WIDTH, height * WINDOW_HEIGHT - PIXEL)
+            (SIDEBAR_WIDTH, PREVIEW_HEIGHT * WINDOW_HEIGHT - PIXEL)
         )
         rect = surface.get_rect(topright=(WINDOW_WIDTH - PIXEL, PIXEL))
         fragment_height = surface.get_height() / 3

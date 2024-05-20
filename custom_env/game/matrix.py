@@ -131,11 +131,6 @@ class Matrix:
         surface = pygame.Surface((MATRIX_WIDTH, MATRIX_HEIGHT))
         rect = surface.get_rect(topleft=(PIXEL, PIXEL))
 
-        line_surface = surface.copy()
-        line_surface.fill((0, 255, 0))
-        line_surface.set_colorkey((0, 255, 0))
-        line_surface.set_alpha(125)
-
         self.timer_update()
         self.sprites.update()
         surface.fill((67, 70, 75))
@@ -144,7 +139,19 @@ class Matrix:
             image = pygame.image.load(sprite.image)
             image = pygame.transform.scale(image, (PIXEL, PIXEL))
             surface.blit(image, sprite.rect)
+            
+        display_surface.blit(surface, (PIXEL, PIXEL))
+        pygame.draw.rect(display_surface, "WHITE", rect, 2, 2)
 
+        return surface
+
+    def draw_line(self, display_surface, surface):
+        rect = surface.get_rect(topleft=(PIXEL, PIXEL))
+        line_surface = surface.copy()
+        line_surface.fill((0, 255, 0))
+        line_surface.set_colorkey((0, 255, 0))
+        line_surface.set_alpha(125)
         self.draw_pixel(surface, line_surface)
         display_surface.blit(surface, (PIXEL, PIXEL))
         pygame.draw.rect(display_surface, "WHITE", rect, 2, 2)
+

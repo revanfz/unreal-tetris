@@ -5,11 +5,12 @@ import pygame
 import numpy as np
 import gymnasium as gym
 
+from custom_env import game
+
 sys.path.append("/")
 
 from random import choice
 from gymnasium.spaces import Box, Dict, Discrete
-from stable_baselines3.common.env_checker import check_env
 
 from custom_env.game.matrix import Matrix
 from custom_env.game.settings import (
@@ -18,11 +19,7 @@ from custom_env.game.settings import (
     TETROMINOS,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
-    SIDEBAR_WIDTH,
-    PREVIEW_HEIGHT,
     PIXEL,
-    ROW,
-    COL,
     IMG_DIR,
     CLEAR_REWARDS,
 )
@@ -45,7 +42,7 @@ class TetrisEnv(gym.Env):
                 "matrix_image": Box(
                     low=0,
                     high=255,
-                    shape=(MATRIX_WIDTH + PIXEL * 2, MATRIX_HEIGHT + PIXEL * 2, 3),
+                    shape=(MATRIX_HEIGHT, MATRIX_WIDTH, 3),
                     dtype=np.uint8,
                 )
             }
@@ -166,6 +163,8 @@ class TetrisEnv(gym.Env):
             "col_transitions": col_transition,
             "holes": sum(holes),
             "cumulative_wells": cumulated_wells,
+            "score": self.game.current_scores,
+            "total_lines": self.game.current_lines
         }
 
     def _get_obs(self):
@@ -237,8 +236,14 @@ class TetrisEnv(gym.Env):
             - info["row_transitions"]
             - info["col_transitions"]
             - self.game.last_landing_height
-            + (info["lines_cleared"] ** 2)
         )
+        if self.game.last_block_placed != self.game.block_placed:
+            reward += 10
+            self.game.last_block_placed = self.game.block_placed
+        if info["lines_cleared"] > 0:
+            reward += CLEAR_REWARDS[info["lines_cleared"]] ** 2
+        if self.game.block_placed % 10 == 0 and self.game.block_placed > 0:
+            reward += 5
         return reward
 
     def render(self):
@@ -256,9 +261,18 @@ class TetrisEnv(gym.Env):
 
             if not self.game.tetromino.game_over:
                 canvas.fill((67, 70, 75))
-                self.game.run(canvas)
+                sfc = self.game.run(canvas)
                 self.score.run(canvas)
-                self.preview.run(self.next_shapes, canvas, is_training=False)
+                self.preview.run(self.next_shapes, canvas)
+
+                matrix_screen = pygame.transform.rotate(canvas.subsurface(
+                    pygame.Rect(PIXEL, PIXEL, MATRIX_WIDTH, MATRIX_HEIGHT)
+                ), 90)
+
+                self.matrix_screen_array = pygame.surfarray.array3d(matrix_screen)
+
+                self.game.draw_line(canvas, sfc)
+
             else:
                 if self.game_over_screen is None:
                     self.game_over_screen = os.path.join(IMG_DIR, "game_over.jpg")
@@ -272,21 +286,6 @@ class TetrisEnv(gym.Env):
                 pygame.event.pump()
                 pygame.display.update()
                 self.clock.tick(self.metadata["render_fps"])
-
-            matrix_screen = canvas.subsurface(
-                pygame.Rect(0, 0, MATRIX_WIDTH + PIXEL * 2, MATRIX_HEIGHT + PIXEL * 2)
-            )
-            # preview_screen = canvas.subsurface(
-            #     pygame.Rect(
-            #         MATRIX_WIDTH + PIXEL,
-            #         0,
-            #         SIDEBAR_WIDTH + PIXEL * 2,
-            #         PREVIEW_HEIGHT * WINDOW_HEIGHT + PIXEL,
-            #     )
-            # )
-
-            self.matrix_screen_array = pygame.surfarray.array3d(matrix_screen)
-            # self.preview_screen_array = pygame.surfarray.array3d(preview_screen)
         except KeyboardInterrupt:
             print("Closing the window...")
             pygame.quit()
