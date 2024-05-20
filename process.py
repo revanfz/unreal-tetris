@@ -22,10 +22,7 @@ def transformImage(image):
         ]
     )
 
-    image = transform(image)
-    utils.save_image(image, "test.jpg")
-
-    return image
+    return transform(image)
 
 
 def local_train(index, opt, global_model, optimizer, timestamp=False):
