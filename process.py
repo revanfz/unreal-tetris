@@ -1,11 +1,8 @@
-import numpy as np
 import torch
 import timeit
-import pygame
 import gymnasium as gym
 import torch.nn.functional as F
 import torchvision.transforms as T
-import torchvision.utils as utils
 
 import custom_env
 
@@ -25,8 +22,35 @@ def transformImage(image):
 
     return transform(image)
 
-def calculate_R(*args, **kwargs):
-    pass
+
+def calculate_loss(local_model, opt, states, batch_actions, batch_hx, batch_cx, done, rewards):
+    policy, values, _, _ = local_model(states, batch_hx, batch_cx) # batchnya 5
+    R = values[-1] * (1 - int(done))
+
+    returns = []
+    for reward in rewards[::-1]:
+        R = reward * opt.gamma
+        returns.append(R)
+    returns.reverse()
+
+    discounted_rewards = torch.tensor(returns, dtype=torch.float, device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+
+    advantage = discounted_rewards - values
+    if torch.cuda.is_available():
+        advantage.cuda()
+    
+    probs = torch.softmax(policy, dim=1)
+    distribution = Categorical(probs)
+    batch_actions = torch.tensor(batch_actions, dtype=torch.int, device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+    log_probs = distribution.log_prob(batch_actions)
+    entropy = distribution.entropy()
+
+    entropy_loss = opt.beta * entropy
+    critic_loss = F.mse_loss(discounted_rewards, values.squeeze(1))
+    actor_loss = -log_probs * advantage.detach() - entropy_loss
+
+    total_loss = (actor_loss + critic_loss).mean()
+    return total_loss
 
 
 def local_train(index, opt, global_model, optimizer, timestamp=False):
@@ -111,38 +135,14 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
         states = torch.stack(batch_states, dim=0)
         batch_cx = torch.stack(batch_cx, dim=1).squeeze(0)
         batch_hx = torch.stack(batch_hx, dim=1).squeeze(0)
-        
+
         if torch.cuda.is_available():
             states.cuda()
             batch_cx.cuda()
             batch_hx.cuda()
 
-        policy, values, _, _ = local_model(states, batch_hx, batch_cx) # batchnya 5
-        R = values[-1] * (1 - int(done))
+        total_loss = calculate_loss(local_model, opt, states, batch_actions, batch_hx, batch_cx, done, rewards)
 
-        returns = []
-        for reward in rewards[::-1]:
-            R = R * opt.gamma
-            returns.append(R)
-        returns.reverse()
-
-        discounted_rewards = torch.tensor(returns, dtype=torch.float, device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
-
-        advantage = discounted_rewards - values
-        if torch.cuda.is_available():
-            advantage.cuda()
-        
-        probs = torch.softmax(policy, dim=1)
-        distribution = Categorical(probs)
-        batch_actions = torch.tensor(batch_actions, dtype=torch.int, device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
-        log_probs = distribution.log_prob(batch_actions)
-        entropy = distribution.entropy()
-
-        entropy_loss = opt.beta * entropy
-        critic_loss = F.mse_loss(discounted_rewards, values.squeeze(1))
-        actor_loss = -log_probs * advantage.detach() - entropy_loss
-
-        total_loss = (actor_loss + critic_loss).mean()
         writer.add_scalar("Train_Agent {}/Loss".format(index), total_loss, curr_episode)
         optimizer.zero_grad()
         total_loss.backward()
@@ -185,6 +185,7 @@ def local_test(index, opt, global_model):
 
         policy, value, hx, cx = local_model(state, hx, cx)
         probs = F.softmax(policy, dim=1)
+        print(probs)
         action = torch.argmax(probs).item()
         state, reward, done, _, info = env.step(action)
         env.render()
