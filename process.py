@@ -105,7 +105,6 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
             batch_hx.append(hx)
 
             state, reward, done, _, info = env.step(action)
-            print(info)
             state = transformImage(state["matrix_image"])
             if torch.cuda.is_available():
                 state = state.cuda()
@@ -185,7 +184,6 @@ def local_test(index, opt, global_model):
 
         policy, value, hx, cx = local_model(state, hx, cx)
         probs = F.softmax(policy, dim=1)
-        print(probs)
         action = torch.argmax(probs).item()
         state, reward, done, _, info = env.step(action)
         env.render()
