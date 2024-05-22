@@ -105,11 +105,16 @@ class TetrisEnv(gym.Env):
                         right_side = True
                     else:
                         right_side = bool(self.game.field_data[row][col+1])
+                    if row == 19:
+                        bottom_side = True
+                    else:
+                        bottom_side = bool(self.game.field_data[row+1][col])
                     if (
                         self.game.field_data[row - 1][col]
-                        and not self.game.field_data[row][col]
-                        and not left_side
-                        and not right_side
+                        and bottom_side
+                        and self.game.field_data[row][col]
+                        and left_side
+                        and right_side
                     ):
                         holes += 1
             holes_per_col.append(holes)
