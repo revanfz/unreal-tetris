@@ -117,6 +117,9 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
                     "Score_Agent {}".format(index), info["score"], curr_episode
                 )
                 writer.add_scalar(
+                    "Block Placed_Agent {}".format(index), info["block_placed"], curr_episode
+                )
+                writer.add_scalar(
                     "Lines Cleared_Agent {}".format(index),
                     info["lines_cleared"],
                     curr_episode,
@@ -127,8 +130,7 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
                     state = state.cuda()
 
             if done:
-                print("Process {}. Episode {}".format(index, curr_episode))
-                print("Rewards {}, Episode {}".format(sum(rewards), curr_episode))
+                print("Process {}: Episode {} done".format(index, curr_episode))
                 break
 
         states = torch.stack(batch_states, dim=0)

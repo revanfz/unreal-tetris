@@ -187,6 +187,7 @@ class TetrisEnv(gym.Env):
             "bumpiness": bumpiness,
             "score": self.game.current_scores,
             "total_lines": self.game.current_lines,
+            "block_placed": self.game.block_placed,
             # "row_transitions": row_transition,
             # "col_transitions": col_transition,
             # "cumulative_wells": cumulated_wells,
