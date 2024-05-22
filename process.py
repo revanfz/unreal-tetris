@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import timeit
 import pygame
@@ -24,6 +25,9 @@ def transformImage(image):
 
     return transform(image)
 
+def calculate_R(*args, **kwargs):
+    pass
+
 
 def local_train(index, opt, global_model, optimizer, timestamp=False):
     torch.manual_seed(42 + index)
@@ -41,6 +45,7 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
         state = state.cuda()
     done = True
     curr_episode = 0
+    
     while True:
         if timestamp:
             if curr_episode % opt.update_episode == 0 and curr_episode > 0:
@@ -59,30 +64,30 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
             hx = hx.cuda()
             cx = cx.cuda()
 
-        log_probs = []
-        values = []
         rewards = []
-        entropies = []
+        batch_actions = []
+        batch_states = []
+        batch_hx = []
+        batch_cx = []
 
         for _ in range(opt.sync_steps):
-            policy, value, hx, cx = local_model(state, hx, cx)
+            policy, value, hx, cx = local_model(state, hx, cx) # btachnya 1
             probs = F.softmax(policy, dim=1)
-            log_prob = F.log_softmax(policy, dim=1)
-            entropy = -(probs * log_prob).sum(1, keepdim=True)
 
             m = Categorical(probs)
             action = m.sample().item()
+            batch_actions.append(action)
+            batch_cx.append(cx)
+            batch_hx.append(hx)
 
             state, reward, done, _, info = env.step(action)
+            print(info)
             state = transformImage(state["matrix_image"])
             if torch.cuda.is_available():
                 state = state.cuda()
 
-            values.append(value)
-            log_probs.append(log_prob[0, action])
             rewards.append(reward)
-            entropies.append(entropy)
-
+            batch_states.append(state)
             if done:
                 curr_episode += 1
                 writer.add_scalar(
@@ -103,34 +108,41 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
                 print("Rewards {}, Episode {}".format(sum(rewards), curr_episode))
                 break
 
-        R = torch.zeros((1, 1), dtype=torch.float)
+        states = torch.stack(batch_states, dim=0)
+        batch_cx = torch.stack(batch_cx, dim=1).squeeze(0)
+        batch_hx = torch.stack(batch_hx, dim=1).squeeze(0)
+        
         if torch.cuda.is_available():
-            R = R.cuda()
-        if not done:
-            _, R, _, _ = local_model(state, hx, cx)
+            states.cuda()
+            batch_cx.cuda()
+            batch_hx.cuda()
 
-        advantage = torch.zeros((1, 1), dtype=torch.float)
+        policy, values, _, _ = local_model(states, batch_hx, batch_cx) # batchnya 5
+        R = values[-1] * (1 - int(done))
+
+        returns = []
+        for reward in rewards[::-1]:
+            R = R * opt.gamma
+            returns.append(R)
+        returns.reverse()
+
+        discounted_rewards = torch.tensor(returns, dtype=torch.float, device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+
+        advantage = discounted_rewards - values
         if torch.cuda.is_available():
-            advantage = advantage.cuda()
+            advantage.cuda()
+        
+        probs = torch.softmax(policy, dim=1)
+        distribution = Categorical(probs)
+        batch_actions = torch.tensor(batch_actions, dtype=torch.int, device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+        log_probs = distribution.log_prob(batch_actions)
+        entropy = distribution.entropy()
 
-        actor_loss = 0
-        critic_loss = 0
-        entropy_loss = 0
-        next_value = R
+        entropy_loss = opt.beta * entropy
+        critic_loss = F.mse_loss(discounted_rewards, values.squeeze(1))
+        actor_loss = -log_probs * advantage.detach() - entropy_loss
 
-        for value, log_policy, reward, entropy in list(
-            zip(values, log_probs, rewards, entropies)
-        )[::-1]:
-            advantage = advantage * opt.gamma
-            td_error = next_value.detach() - value.detach()
-            advantage = advantage + reward + opt.gamma * td_error
-            next_value = value
-            actor_loss = actor_loss + log_policy * advantage
-            R = R * opt.gamma + reward
-            critic_loss = critic_loss + (R - value) ** 2 / 2
-            entropy_loss = entropy_loss + entropy
-
-        total_loss = -actor_loss + critic_loss - opt.beta * entropy_loss
+        total_loss = (actor_loss + critic_loss).mean()
         writer.add_scalar("Train_Agent {}/Loss".format(index), total_loss, curr_episode)
         optimizer.zero_grad()
         total_loss.backward()

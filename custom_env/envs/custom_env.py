@@ -47,7 +47,7 @@ class TetrisEnv(gym.Env):
                 )
             }
         )
-        self.action_space = Discrete(7)
+        self.action_space = Discrete(13)
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
@@ -97,9 +97,19 @@ class TetrisEnv(gym.Env):
             holes = 0
             if max_row != 0:
                 for row in range(len(self.game.field_data) - 1, 20 - max_row, -1):
+                    if col == 0:
+                        left_side = True
+                    else:
+                        left_side = bool(self.game.field_data[row][col-1])
+                    if col == len(max_rows) - 1:
+                        right_side = True
+                    else:
+                        right_side = bool(self.game.field_data[row][col+1])
                     if (
-                        not self.game.field_data[row][col]
-                        and self.game.field_data[row - 1][col]
+                        self.game.field_data[row - 1][col]
+                        and not self.game.field_data[row][col]
+                        and not left_side
+                        and not right_side
                     ):
                         holes += 1
             holes_per_col.append(holes)
@@ -149,22 +159,32 @@ class TetrisEnv(gym.Env):
                         wells += 1
 
         return wells
+    
+    def calculate_bump(self, col_heights):
+        bumpiness = 0
+        for i in range(len(col_heights)-1):
+            bumpiness += abs(col_heights[i] - col_heights[i + 1])
+
+        return bumpiness 
 
     def _get_info(self):
         col_heights = self.find_col_heights()
         holes = self.calculate_holes(col_heights)
         lines_cleared = self.game.last_deleted_rows
-        row_transition, col_transition = self.count_transitions()
-        cumulated_wells = self.count_wells()
+        bumpiness = self.calculate_bump(col_heights)
+        # row_transition, col_transition = self.count_transitions()
+        # cumulated_wells = self.count_wells()
 
         return {
+            "heights": sum(col_heights),
             "lines_cleared": lines_cleared,
-            "row_transitions": row_transition,
-            "col_transitions": col_transition,
             "holes": sum(holes),
-            "cumulative_wells": cumulated_wells,
+            "bumpiness": bumpiness,
             "score": self.game.current_scores,
-            "total_lines": self.game.current_lines
+            "total_lines": self.game.current_lines,
+            # "row_transitions": row_transition,
+            # "col_transitions": col_transition,
+            # "cumulative_wells": cumulated_wells,
         }
 
     def _get_obs(self):
@@ -197,27 +217,41 @@ class TetrisEnv(gym.Env):
         return observation, info
 
     def step(self, action):
-        if action == 0:  # Noop (No-operation)
+        # 0 no rotation + noop
+        # 1 no rotation + right
+        # 2 no rotation + left
+        # 3 rotate 90 + noop
+        # 4 rotate 90 + right
+        # 5 rotate 90 + left
+        # 6 rotate 180 + noop
+        # 7 rotate 180 + right
+        # 8 rotate 180 + left
+        # 9 rotate -90 + noop
+        # 10 rotate -90 + right
+        # 11 rotate -90 + left
+        # 12 hard drop
+        
+        if action == 0:
             pass
 
-        # if not self.game.timers["rotate"].active:
-        if action == 1 or action == 2:  # rotation
-            self.game.tetromino.rotate("right" if action == 1 else "left")
-            # self.game.timers["rotate"].activate()
+        if action in [1, 2]:
+            self.game.input(1 if action == 1 else -1)
 
-        # if not self.game.timers["horizontalMove"].active: # kanan
-        if action == 3:
-            self.game.input(1)
-            # self.game.timers["horizotalMove"].activate()
+        if action in [3, 9]:
+            self.game.tetromino.rotate("right" if action == 3 else "left")
 
-        if action == 4:  # kiri
-            self.game.input(-1)
-            # self.game.timers["horizontalMove"].activate()
+        if action in [4, 5, 10, 11]:
+            self.game.tetromino.rotate("right" if action <= 5 else "left")
+            self.game.input(1 if action in [4, 10] else -1)
 
-        if action == 5:
-            self.game.soft_drop()
+        if action == 6:
+            self.game.tetromino.rotate("right", amount=2)
 
-        if action == 6:  # drop
+        if action in [7, 8]:
+            self.game.tetromino.rotate("right", amount=2)
+            self.game.input(1 if action == 7 else -1)
+
+        if action == 12:  # drop
             self.game.drop()
 
         self.render()
@@ -230,21 +264,20 @@ class TetrisEnv(gym.Env):
         return observation, reward, self.game.tetromino.game_over, False, info
 
     def evaluate(self, info):
-        reward = (
-            -4 * info["holes"]
-            - info["cumulative_wells"]
-            - info["row_transitions"]
-            - info["col_transitions"]
-            - self.game.last_landing_height
-        )
-        if self.game.last_block_placed != self.game.block_placed:
-            reward += 10
-            self.game.last_block_placed = self.game.block_placed
-        if info["lines_cleared"] > 0:
-            reward += CLEAR_REWARDS[info["lines_cleared"]] ** 2
-        if self.game.block_placed % 10 == 0 and self.game.block_placed > 0:
-            reward += 5
-        return reward
+        # reward = (
+        #     -4 * info["holes"]
+        #     - info["cumulative_wells"]
+        #     - info["row_transitions"]
+        #     - info["col_transitions"]
+        #     - self.game.last_landing_height
+        # )
+
+        reward = - 0.51 * info["heights"] + 0.76 * info["total_lines"] - 0.36 * info["holes"] - 0.18 * info["bumpiness"]
+
+        if self.game.tetromino.game_over:
+            return -2
+        else:
+            return reward
 
     def render(self):
         if self.render_mode == "rgb_array" or self.render_mode == "human":
@@ -259,26 +292,35 @@ class TetrisEnv(gym.Env):
 
             canvas = pygame.Surface(self.window_size)
 
-            if not self.game.tetromino.game_over:
-                canvas.fill((67, 70, 75))
-                sfc = self.game.run(canvas)
-                self.score.run(canvas)
-                self.preview.run(self.next_shapes, canvas)
+            canvas.fill((67, 70, 75))
+            sfc = self.game.run(canvas)
+            self.score.run(canvas)
+            self.preview.run(self.next_shapes, canvas)
 
-                matrix_screen = pygame.transform.rotate(canvas.subsurface(
-                    pygame.Rect(PIXEL, PIXEL, MATRIX_WIDTH, MATRIX_HEIGHT)
-                ), 90)
+            matrix_screen = pygame.transform.rotate(canvas.subsurface(
+                pygame.Rect(PIXEL, PIXEL, MATRIX_WIDTH, MATRIX_HEIGHT)
+            ), 90)
 
-                self.matrix_screen_array = pygame.surfarray.array3d(matrix_screen)
+            self.matrix_screen_array = pygame.surfarray.array3d(matrix_screen)
 
-                self.game.draw_line(canvas, sfc)
+            self.game.draw_line(canvas, sfc)
 
-            else:
+            if self.game.tetromino.game_over:
                 if self.game_over_screen is None:
                     self.game_over_screen = os.path.join(IMG_DIR, "game_over.jpg")
                     pygame.image.save(canvas, self.game_over_screen)
                     self.game_over_screen = pygame.image.load(self.game_over_screen)
+                font = pygame.font.Font(None, 32)  # Adjust font size as needed
+                text_surface = font.render("Game Over", True, (255, 255, 255))  # Red color
+
+                # Get text surface dimensions and screen center
+                text_width, text_height = text_surface.get_size()
+                screen_width, screen_height = canvas.get_size()
+                center_x = (screen_width - text_width) // 2
+                center_y = (screen_height - text_height) // 2
+
                 canvas.blit(self.game_over_screen, (0, 0))
+                canvas.blit(text_surface, (center_x, center_y))
 
             if self.render_mode == "human":
                 self.window.blit(canvas, canvas.get_rect())

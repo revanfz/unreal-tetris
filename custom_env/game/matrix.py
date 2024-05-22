@@ -37,8 +37,8 @@ class Matrix:
 
         self.timers = {
             "verticalMove": Timer(self.down_speed, True, self.move_down),
-            "horizontalMove": Timer(MOVE_WAIT_TIME),
-            "rotate": Timer(ROTATE_WAIT_TIME),
+            # "horizontalMove": Timer(MOVE_WAIT_TIME),
+            # "rotate": Timer(ROTATE_WAIT_TIME),
         }
         self.timers["verticalMove"].activate()
 

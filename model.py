@@ -8,14 +8,14 @@ class ActorCritic(nn.Module):
         super(ActorCritic, self).__init__()
         input_layers = [
             nn.Conv2d(num_inputs, 16, 8, stride=4, padding=1),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             nn.Conv2d(16, 32, 4, stride=2, padding=1),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
         ]
         self.convolutional = nn.Sequential(*input_layers)
         self.fc = nn.Sequential(
             nn.Linear(32 * 10 * 10, 256),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
         )
         self.lstm = nn.LSTMCell(256, 256)
         self.critic = nn.Linear(256, 1)

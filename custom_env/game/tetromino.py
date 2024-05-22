@@ -96,11 +96,11 @@ class Tetromino:
 
         return False
 
-    def rotate(self, direction):
+    def rotate(self, direction, amount=1):
         if self.shape != "O":
             pivot_pos = self.blocks[0].pos  # pivot point
             # new block position after rotating
-            new_block_position = [block.rotate(pivot_pos, direction) for block in self.blocks]
+            new_block_position = [block.rotate(pivot_pos, direction, amount) for block in self.blocks]
 
             # check collision
             for pos in new_block_position:
@@ -130,9 +130,9 @@ class Block(pygame.sprite.Sprite):
 
         self.rect = image.get_rect(topleft=self.pos * PIXEL)
 
-    def rotate(self, pivot_pos, direction):
+    def rotate(self, pivot_pos, direction, amount=1):
         multiplication = -1 if direction == 'left' else 1
-        return pivot_pos + (self.pos - pivot_pos).rotate(90 * multiplication)
+        return pivot_pos + (self.pos - pivot_pos).rotate(90 * multiplication * amount)
         
 
     def update(self):
