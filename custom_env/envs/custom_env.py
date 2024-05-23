@@ -312,19 +312,20 @@ class TetrisEnv(gym.Env):
         return observation, reward, self.game.tetromino.game_over, False, info
 
     def evaluate(self, info):
-        # reward = (
-        #     -4 * info["holes"]
-        #     - info["cumulative_wells"]
-        #     - info["row_transitions"]
-        #     - info["col_transitions"]
-        #     - info["landing_height"]
-        #     + info["lines_cleared"] * 50
-        # )
+        reward = (
+            -4 * info["holes"]
+            - info["cumulative_wells"]
+            - info["row_transitions"]
+            - info["col_transitions"]
+            - info["landing_height"]
+            + info["lines_cleared"] * 50
+        )
 
         if self.game.tetromino.game_over:
-            return -2
+            return -100
         else:
-            return 10 ** info["lines_cleared"]
+            # return 10 ** info["lines_cleared"]
+            return reward
 
     def render(self):
         if self.render_mode == "rgb_array" or self.render_mode == "human":

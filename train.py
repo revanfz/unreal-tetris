@@ -21,15 +21,15 @@ def get_args():
             UNTUK MENGHASILKAN AGEN CERDAS (STUDI KASUS: PERMAINAN TETRIS)
         """
     )
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument(
-        "--gamma", type=float, default=0.9, help="discount factor for rewards"
+        "--gamma", type=float, default=0.99, help="discount factor for rewards"
     )
-    parser.add_argument("--beta", type=float, default=0.1, help="entropy coefficient")
-    parser.add_argument("--sync-steps", type=int, default=5)
+    parser.add_argument("--beta", type=float, default=0.01, help="entropy coefficient")
+    parser.add_argument("--sync-steps", type=int, default=20)
     parser.add_argument("--update-episode", type=int, default=50)
-    parser.add_argument("--max-episode", type=int, default=1e4)
-    parser.add_argument("--num-agents", type=int, default=6)
+    parser.add_argument("--max-episode", type=int, default=1e2)
+    parser.add_argument("--num-agents", type=int, default=8)
     parser.add_argument("--log-path", type=str, default="tensorboard/a3c_tetris")
     parser.add_argument("--model-path", type=str, default="trained_models")
     parser.add_argument("--render-mode", type=str, default="rgb_array", help="Mode render environment")
@@ -56,13 +56,13 @@ def train(opt):
         mp.get_context("spawn")
         env = gym.make("SmartTetris-v0")
 
-        global_model = ActorCritic(1, env.action_space.n)
+        global_model = ActorCritic(3, env.action_space.n)
         if torch.cuda.is_available():
             global_model.cuda()
         global_model.share_memory()
 
         if opt.load_model:
-            file_ = "{}/a3c_tetris".format(opt.model_path)
+            file_ = "{}/a3c_tetris.pt".format(opt.model_path)
             if os.path.isfile(file_):
                 global_model.load_state_dict(torch.load(file_))
 

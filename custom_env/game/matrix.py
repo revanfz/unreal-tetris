@@ -135,7 +135,6 @@ class Matrix:
             surface.blit(image, sprite.rect)
             
         display_surface.blit(surface, (PIXEL, PIXEL))
-        pygame.draw.rect(display_surface, "WHITE", rect, 2, 2)
 
         return surface
 

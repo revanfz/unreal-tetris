@@ -11,16 +11,18 @@ import custom_env
 from model import ActorCritic
 from tensorboardX import SummaryWriter
 from torch.distributions import Categorical
+from torchvision.utils import save_image
 
 
 def transformImage(image):
     transform = T.Compose(
         [
             T.ToTensor(),
-            T.Grayscale(num_output_channels=1),
-            T.Resize((84, 84)),
+            T.Resize((75, 75)),
         ]
     )
+    x = transform(image)
+    save_image(x, "test.jpg")
 
     return transform(image)
 
@@ -31,7 +33,7 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
         start_time = timeit.default_timer()
     writer = SummaryWriter(opt.log_path)
     env = gym.make("SmartTetris-v0", render_mode=opt.render_mode)
-    local_model = ActorCritic(1, env.action_space.n)
+    local_model = ActorCritic(3, env.action_space.n)
     if torch.cuda.is_available():
         local_model.cuda()
     local_model.train()
@@ -59,12 +61,13 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
             hx = hx.cuda()
             cx = cx.cuda()
 
-        log_probs = []
-        values = []
-        rewards = []
-        entropies = []
+        log_probs = torch.zeros(opt.sync_steps, 1, device="cuda:0" if torch.cuda.is_available() else "cpu")
+        values = torch.zeros(opt.sync_steps, 1, device="cuda:0" if torch.cuda.is_available() else "cpu")
+        rewards = torch.zeros(opt.sync_steps, 1, device="cuda:0" if torch.cuda.is_available() else "cpu")
+        entropies = torch.zeros(opt.sync_steps, 1, device="cuda:0" if torch.cuda.is_available() else "cpu")
+        masks = torch.zeros(opt.sync_steps, 1, device="cuda:0" if torch.cuda.is_available() else "cpu")
 
-        for _ in range(opt.sync_steps):
+        for step in range(opt.sync_steps):
             policy, value, hx, cx = local_model(state, hx, cx)
             probs = F.softmax(policy, dim=1)
             log_prob = F.log_softmax(policy, dim=1)
@@ -78,23 +81,28 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
             if torch.cuda.is_available():
                 state = state.cuda()
 
-            values.append(value)
-            log_probs.append(log_prob[0, action])
-            rewards.append(reward)
-            entropies.append(entropy)
+            values[step] = value
+            log_probs[step] = log_prob[0, action]
+            rewards[step] = reward
+            entropies[step] = entropy
+            masks[step] = bool(not done)
 
             if done:
                 curr_episode += 1
-                writer.add_scalar("Score_Agent {}".format(index), info["score"], curr_episode)
-                writer.add_scalar("Lines Cleared_Agent {}".format(index), info["lines_cleared"], curr_episode)
+                writer.add_scalar(
+                    "Score_Agent {}".format(index), info["score"], curr_episode
+                )
+                writer.add_scalar(
+                    "Lines Cleared_Agent {}".format(index),
+                    info["lines_cleared"],
+                    curr_episode,
+                )
                 state, info = env.reset()
                 state = transformImage(state["matrix_image"])
                 if torch.cuda.is_available():
                     state = state.cuda()
 
-            if done:
-                print("Process {}. Episode {}".format(index, curr_episode))
-                print("Rewards {}, Episode {}".format(sum(rewards), curr_episode))
+                print("Process {}. Finished episode {}".format(index, curr_episode))
                 break
 
         R = torch.zeros((1, 1), dtype=torch.float)
@@ -103,25 +111,21 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
         if not done:
             _, R, _, _ = local_model(state, hx, cx)
 
-        gae = torch.zeros((1, 1), dtype=torch.float)
+        gae = 0.0
+        advantages = torch.zeros(len(rewards))
         if torch.cuda.is_available():
-            gae = gae.cuda()
+            advantages = advantages.cuda()
 
-        actor_loss = 0
-        critic_loss = 0
-        next_value = R
+        for t in reversed(range(len(rewards) - 1)):
+            td_error = rewards[t] + opt.gamma * masks[t] * values[t + 1] - values[t]
+            gae = td_error + opt.gamma * masks[t] * gae
+            advantages[t] = gae
 
-        for value, log_policy, reward, entropy in list(
-            zip(values, log_probs, rewards, entropies)
-        )[::-1]:
-            R = R * opt.gamma + reward
-            gae = gae * opt.gamma
-            gae = gae + reward + opt.gamma * next_value.detach() - value.detach()
-            next_value = value
-            actor_loss = actor_loss + log_policy * gae - opt.beta * entropy
-            critic_loss = critic_loss + (R - value) ** 2 / 2
-
-        total_loss = actor_loss + critic_loss * 0.5
+        critic_loss = advantages.pow(2).mean()
+        actor_loss = (
+            -(advantages.detach() * log_probs).mean() - opt.beta * entropy.mean()
+        )
+        total_loss = actor_loss + critic_loss
         writer.add_scalar("Train_Agent {}/Loss".format(index), total_loss, curr_episode)
         optimizer.zero_grad()
         total_loss.backward()
@@ -146,7 +150,7 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
 def local_test(index, opt, global_model):
     torch.manual_seed(42 + index)
     env = gym.make("SmartTetris-v0", render_mode="human")
-    local_model = ActorCritic(1, env.action_space.n)
+    local_model = ActorCritic(3, env.action_space.n)
     local_model.eval()
     state, info = env.reset()
     state = transformImage(state["matrix_image"])

@@ -5,14 +5,18 @@ class ActorCritic(nn.Module):
     def __init__(self, num_inputs, num_actions):
         super(ActorCritic, self).__init__()
         input_layers = [
-            nn.Conv2d(num_inputs, 16, 8, stride=4, padding=1),
+            nn.Conv2d(num_inputs, 32, 3, stride=2, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(16, 32, 4, stride=2, padding=1),
+            nn.Conv2d(32, 32, 3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 32, 3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 32, 3, stride=2, padding=1),
             nn.ReLU(inplace=True),
         ]
         self.convolutional = nn.Sequential(*input_layers)
         self.fc = nn.Sequential(
-            nn.Linear(32 * 10 * 10, 256),
+            nn.Linear(32 * 5 * 5, 256),
             nn.ReLU(inplace=True),
         )
         self.lstm = nn.LSTMCell(256, 256)
@@ -31,6 +35,6 @@ class ActorCritic(nn.Module):
 
     def forward(self, x, hx, cx):
         x = self.convolutional(x)
-        x = self.fc(x.view(-1, 32 * 10 * 10))
+        x = self.fc(x.view(-1, 32 * 5 * 5))
         hx, cx = self.lstm(x, (hx, cx))
         return self.actor(hx), self.critic(hx), hx, cx
