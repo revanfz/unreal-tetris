@@ -21,8 +21,6 @@ def transformImage(image):
             T.Resize((75, 75)),
         ]
     )
-    x = transform(image)
-    save_image(x, "test.jpg")
 
     return transform(image)
 
