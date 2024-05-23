@@ -61,7 +61,6 @@ class Tetromino:
 
             if self.check_ceiling_collision():
                 self.set_game_over()
-                print("Game Over")
             else:
                 self.create_new_tetromino()
         else:
@@ -70,10 +69,12 @@ class Tetromino:
 
     def move_horizontal(self, amount):
         if self.check_horizontal_collision(amount):
-            return
+            return True
         else:
             for block in self.blocks:
                 block.pos.x += amount
+        
+        return False
 
     def check_horizontal_collision(self, amount):
         collision_list = [
@@ -106,19 +107,20 @@ class Tetromino:
             for pos in new_block_position:
                 # horizontal
                 if pos.x < 0 or pos.x >= COL:
-                    return
+                    return True
 
                 # vertical / floor
                 if pos.y >= ROW:
-                    return
+                    return True
 
                 # field check (with other pieces)
                 if self.field_data[int(pos.y)][int(pos.x)]:
-                    return
+                    return True
 
             for i, block in enumerate(self.blocks):
                 block.pos = new_block_position[i]
 
+        return False
 
 class Block(pygame.sprite.Sprite):
     def __init__(self, group, pos, color, image):

@@ -44,7 +44,13 @@ class TetrisEnv(gym.Env):
                     high=255,
                     shape=(MATRIX_HEIGHT, MATRIX_WIDTH, 3),
                     dtype=np.uint8,
-                )
+                ),
+                # "features": Box(
+                #     low=0,
+                #     high=50,
+                #     shape=(6,),
+                #     dtype=np.float32
+                # )
             }
         )
         self.action_space = Discrete(13)
@@ -110,9 +116,9 @@ class TetrisEnv(gym.Env):
                     else:
                         bottom_side = bool(self.game.field_data[row+1][col])
                     if (
-                        self.game.field_data[row - 1][col]
+                        not self.game.field_data[row][col]
+                        and self.game.field_data[row - 1][col]
                         and bottom_side
-                        and self.game.field_data[row][col]
                         and left_side
                         and right_side
                     ):
@@ -170,32 +176,57 @@ class TetrisEnv(gym.Env):
         for i in range(len(col_heights)-1):
             bumpiness += abs(col_heights[i] - col_heights[i + 1])
 
-        return bumpiness 
+        return bumpiness
+    
+    def find_landing_height(self, col_heights):
+        rows = []
+        cols = []
+        for block in self.game.tetromino.blocks:
+            col, row = block.pos
+            rows.append(row)
+            cols.append(int(col))
+
+        landing_height = []
+        for col in cols:
+            landing_height.append(col_heights[col])
+
+        return landing_height
+
 
     def _get_info(self):
         col_heights = self.find_col_heights()
         holes = self.calculate_holes(col_heights)
-        lines_cleared = self.game.last_deleted_rows
         bumpiness = self.calculate_bump(col_heights)
-        # row_transition, col_transition = self.count_transitions()
-        # cumulated_wells = self.count_wells()
+        row_transition, col_transition = self.count_transitions()
+        cumulated_wells = self.count_wells()
+        landing_height = max(self.find_landing_height(col_heights))
 
         return {
             "heights": sum(col_heights),
-            "lines_cleared": lines_cleared,
+            "lines_cleared": self.game.last_deleted_rows,
             "holes": sum(holes),
             "bumpiness": bumpiness,
             "score": self.game.current_scores,
             "total_lines": self.game.current_lines,
             "block_placed": self.game.block_placed,
-            # "row_transitions": row_transition,
-            # "col_transitions": col_transition,
-            # "cumulative_wells": cumulated_wells,
+            "row_transitions": row_transition,
+            "col_transitions": col_transition,
+            "cumulative_wells": cumulated_wells,
+            "landing_height": landing_height,
         }
 
-    def _get_obs(self):
+    def _get_obs(self, info):
         return {
             "matrix_image": self.matrix_screen_array,
+            # "features": np.array([
+            #     info["landing_height"],
+            #     info["lines_cleared"],
+            #     info["row_transitions"],
+            #     info["col_transitions"],
+            #     info["holes"],
+            #     info["cumulative_wells"]
+            # ], dtype=np.float32)
+            # "board_data": self.game.field_data,
             # "preview_image": self.preview_screen_array,
         }
 
@@ -218,44 +249,54 @@ class TetrisEnv(gym.Env):
         self.render()
 
         info = self._get_info()
-        observation = self._get_obs()
+        observation = self._get_obs(info)
 
         return observation, info
 
     def step(self, action):
-        # 0 no rotation + noop
-        # 1 no rotation + right
-        # 2 no rotation + left
-        # 3 rotate 90 + noop
-        # 4 rotate 90 + right
-        # 5 rotate 90 + left
-        # 6 rotate 180 + noop
-        # 7 rotate 180 + right
-        # 8 rotate 180 + left
-        # 9 rotate -90 + noop
-        # 10 rotate -90 + right
-        # 11 rotate -90 + left
-        # 12 hard drop
-        
+        """ 
+            0 no rotation + noop
+            1 no rotation + right
+            2 no rotation + left
+            3 rotate 90 + noop
+            4 rotate 90 + right
+            5 rotate 90 + left
+            6 rotate 180 + noop
+            7 rotate 180 + right
+            8 rotate 180 + left
+            9 rotate -90 + noop
+            10 rotate -90 + right
+            11 rotate -90 + left
+            12 hard drop
+        """
+        penalty = 0
+
         if action == 0:
             pass
 
         if action in [1, 2]:
-            self.game.input(1 if action == 1 else -1)
+            if self.game.input(1 if action == 1 else -1):
+                penalty += 10
 
         if action in [3, 9]:
-            self.game.tetromino.rotate("right" if action == 3 else "left")
+            if self.game.tetromino.rotate("right" if action == 3 else "left"):
+                penalty += 10
 
         if action in [4, 5, 10, 11]:
-            self.game.tetromino.rotate("right" if action <= 5 else "left")
-            self.game.input(1 if action in [4, 10] else -1)
+            if self.game.tetromino.rotate("right" if action <= 5 else "left"):
+                penalty += 10
+            if self.game.input(1 if action in [4, 10] else -1):
+                penalty += 10
 
         if action == 6:
-            self.game.tetromino.rotate("right", amount=2)
+            if self.game.tetromino.rotate("right", amount=2):
+                penalty += 10
 
         if action in [7, 8]:
-            self.game.tetromino.rotate("right", amount=2)
-            self.game.input(1 if action == 7 else -1)
+            if self.game.tetromino.rotate("right", amount=2):
+                penalty += 10
+            if self.game.input(1 if action == 7 else -1):
+                penalty += 10
 
         if action == 12:  # drop
             self.game.drop()
@@ -263,9 +304,10 @@ class TetrisEnv(gym.Env):
         self.render()
 
         info = self._get_info()
-        observation = self._get_obs()
+        observation = self._get_obs(info)
 
         reward = self.evaluate(info)
+        # reward -= penalty
 
         return observation, reward, self.game.tetromino.game_over, False, info
 
@@ -275,15 +317,14 @@ class TetrisEnv(gym.Env):
         #     - info["cumulative_wells"]
         #     - info["row_transitions"]
         #     - info["col_transitions"]
-        #     - self.game.last_landing_height
+        #     - info["landing_height"]
+        #     + info["lines_cleared"] * 50
         # )
-
-        reward = - 0.51 * info["heights"] + 0.76 * info["total_lines"] - 0.36 * info["holes"] - 0.18 * info["bumpiness"]
 
         if self.game.tetromino.game_over:
             return -2
         else:
-            return reward
+            return 10 ** info["lines_cleared"]
 
     def render(self):
         if self.render_mode == "rgb_array" or self.render_mode == "human":
