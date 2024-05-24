@@ -16,12 +16,11 @@ from custom_env.game.matrix import Matrix
 from custom_env.game.settings import (
     MATRIX_WIDTH,
     MATRIX_HEIGHT,
-    TETROMINOS,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
     PIXEL,
     IMG_DIR,
-    CLEAR_REWARDS,
+    COL
 )
 from custom_env.game.preview import Preview
 from custom_env.game.score import Score
@@ -255,51 +254,29 @@ class TetrisEnv(gym.Env):
 
     def step(self, action):
         """ 
-            0 no rotation + noop
-            1 no rotation + right
-            2 no rotation + left
-            3 rotate 90 + noop
-            4 rotate 90 + right
-            5 rotate 90 + left
-            6 rotate 180 + noop
-            7 rotate 180 + right
-            8 rotate 180 + left
-            9 rotate -90 + noop
-            10 rotate -90 + right
-            11 rotate -90 + left
-            12 hard drop
+            0 Noop
+            1 Right
+            2 Left
+            3 RC
+            4 RCC
+            5 Soft drop
+            6 Hard drop
         """
         penalty = 0
 
         if action == 0:
             pass
 
-        if action in [1, 2]:
+        elif action in [1, 2]:
             if self.game.input(1 if action == 1 else -1):
                 penalty += 10
 
-        if action in [3, 9]:
+        elif action in [3, 4]:
             if self.game.tetromino.rotate("right" if action == 3 else "left"):
                 penalty += 10
-
-        if action in [4, 5, 10, 11]:
-            if self.game.tetromino.rotate("right" if action <= 5 else "left"):
-                penalty += 10
-            if self.game.input(1 if action in [4, 10] else -1):
-                penalty += 10
-
-        if action == 6:
-            if self.game.tetromino.rotate("right", amount=2):
-                penalty += 10
-
-        if action in [7, 8]:
-            if self.game.tetromino.rotate("right", amount=2):
-                penalty += 10
-            if self.game.input(1 if action == 7 else -1):
-                penalty += 10
-
-        if action == 12:  # drop
-            self.game.drop()
+        
+        else:  # drop
+            self.game.soft_drop() if action == 5 else self.game.drop()
 
         self.render()
 
@@ -322,10 +299,10 @@ class TetrisEnv(gym.Env):
         )
 
         if self.game.tetromino.game_over:
-            return -100
+            return -2
         else:
-            # return 10 ** info["lines_cleared"]
-            return reward
+            return 10 ** info["lines_cleared"] * COL
+        
 
     def render(self):
         if self.render_mode == "rgb_array" or self.render_mode == "human":
@@ -354,10 +331,13 @@ class TetrisEnv(gym.Env):
             self.game.draw_line(canvas, sfc)
 
             if self.game.tetromino.game_over:
-                if self.game_over_screen is None:
+                if self.game_over_screen is None  and self.render_mode == "human":
                     self.game_over_screen = os.path.join(IMG_DIR, "game_over.jpg")
                     pygame.image.save(canvas, self.game_over_screen)
                     self.game_over_screen = pygame.image.load(self.game_over_screen)
+
+                    canvas.blit(self.game_over_screen, (0, 0))
+                
                 font = pygame.font.Font(None, 32)  # Adjust font size as needed
                 text_surface = font.render("Game Over", True, (255, 255, 255))  # Red color
 
@@ -366,8 +346,6 @@ class TetrisEnv(gym.Env):
                 screen_width, screen_height = canvas.get_size()
                 center_x = (screen_width - text_width) // 2
                 center_y = (screen_height - text_height) // 2
-
-                canvas.blit(self.game_over_screen, (0, 0))
                 canvas.blit(text_surface, (center_x, center_y))
 
             if self.render_mode == "human":

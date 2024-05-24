@@ -26,10 +26,10 @@ def get_args():
         "--gamma", type=float, default=0.99, help="discount factor for rewards"
     )
     parser.add_argument("--beta", type=float, default=0.01, help="entropy coefficient")
-    parser.add_argument("--sync-steps", type=int, default=20)
+    parser.add_argument("--sync-steps", type=int, default=4)
     parser.add_argument("--update-episode", type=int, default=50)
     parser.add_argument("--max-episode", type=int, default=1e2)
-    parser.add_argument("--num-agents", type=int, default=8)
+    parser.add_argument("--num-agents", type=int, default=10)
     parser.add_argument("--log-path", type=str, default="tensorboard/a3c_tetris")
     parser.add_argument("--model-path", type=str, default="trained_models")
     parser.add_argument("--render-mode", type=str, default="rgb_array", help="Mode render environment")
@@ -56,7 +56,7 @@ def train(opt):
         mp.get_context("spawn")
         env = gym.make("SmartTetris-v0")
 
-        global_model = ActorCritic(3, env.action_space.n)
+        global_model = ActorCritic(4, env.action_space.n)
         if torch.cuda.is_available():
             global_model.cuda()
         global_model.share_memory()
