@@ -21,18 +21,19 @@ def get_args():
             UNTUK MENGHASILKAN AGEN CERDAS (STUDI KASUS: PERMAINAN TETRIS)
         """
     )
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument(
         "--gamma", type=float, default=0.99, help="discount factor for rewards"
     )
     parser.add_argument("--beta", type=float, default=0.01, help="entropy coefficient")
-    parser.add_argument("--sync-steps", type=int, default=4)
-    parser.add_argument("--update-episode", type=int, default=50)
-    parser.add_argument("--max-episode", type=int, default=1e2)
-    parser.add_argument("--num-agents", type=int, default=10)
-    parser.add_argument("--log-path", type=str, default="tensorboard/a3c_tetris")
-    parser.add_argument("--model-path", type=str, default="trained_models")
-    parser.add_argument("--render-mode", type=str, default="rgb_array", help="Mode render environment")
+    parser.add_argument("--sync-steps", type=int, default=20, help="jumlah step sebelum mengupdate parameter global")
+    parser.add_argument("--update-episode", type=int, default=50, help="jumlah episode sebelum menyimpan model")
+    parser.add_argument("--max-episode", type=int, default=1e1, help="Maksimal episode pelatihan")
+    parser.add_argument("--num-agents", type=int, default=8, help="Jumlah agen yang berjalan secara asinkron")
+    parser.add_argument("--log-path", type=str, default="tensorboard/a3c_tetris", help="direktori plotting tensorboard")
+    parser.add_argument("--model-path", type=str, default="trained_models", help="direktori penyimpanan model haisl training")
+    parser.add_argument("--render-mode", type=str, default="rgb_array", help="Mode render dari environment")
+    parser.add_argument("--framestack", type=int, default=4, help="Numebr of framestack to be feed")
     parser.add_argument(
         "--load-model",
         type=bool,
@@ -68,14 +69,16 @@ def train(opt):
 
         optimizer = SharedAdam(global_model.parameters(), lr=opt.lr)
         processes = []
+        global_eps = mp.Value("i", 0)
+        # total_episode, res_queue = mp.Value("i", 0), mp.Queue()
         for index in range(opt.num_agents):
             if index == 0:
                 process = mp.Process(
-                    target=local_train, args=(index, opt, global_model, optimizer, True)
+                    target=local_train, args=(index, opt, global_model, optimizer, global_eps, True)
                 )
             else:
                 process = mp.Process(
-                    target=local_train, args=(index, opt, global_model, optimizer)
+                    target=local_train, args=(index, opt, global_model, optimizer, global_eps)
                 )
             process.start()
             processes.append(process)

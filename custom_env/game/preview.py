@@ -20,7 +20,7 @@ class Preview:
     def run(self, next_shapes, display_surface):
         shape_surfaces = {
             shape: scale_by(
-                pygame.image.load(TETROMINOS_IMG_DIR + f"/{shape}.png"), 0.1
+                pygame.image.load(TETROMINOS_IMG_DIR + f"/{shape}.png"), 0.18
             )
             for shape in TETROMINOS.keys()
         }

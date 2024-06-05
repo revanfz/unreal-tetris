@@ -4,14 +4,12 @@ import pygame
 import gymnasium as gym
 import torch.nn.functional as F
 import torchvision.transforms as T
-import torchvision.utils as utils
 
 import custom_env
 
 from model import ActorCritic
 from tensorboardX import SummaryWriter
 from torch.distributions import Categorical
-from torchvision.utils import save_image
 
 
 def transformImage(image):
@@ -20,16 +18,13 @@ def transformImage(image):
             T.ToTensor(),
             T.Grayscale(num_output_channels=1),
             T.Resize((84, 84)),
-            T.Normalize(mean=[0.5], std=[0.5])
         ]
     )
-    x = transform(image)
-    save_image(x, "test.jpg")
 
     return transform(image)
 
 
-def local_train(index, opt, global_model, optimizer, timestamp=False):
+def local_train(index, opt, global_model, optimizer, global_eps, timestamp=False):
     torch.manual_seed(42 + index)
     if timestamp:
         start_time = timeit.default_timer()
@@ -41,7 +36,7 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
     local_model.train()
     obs, info = env.reset()
     obs = transformImage(obs["matrix_image"])
-    state = torch.zeros((opt.sync_steps, 84, 84))
+    state = torch.zeros((opt.framestack, 84, 84))
     state[0] = obs
     if torch.cuda.is_available():
         state = state.cuda()
@@ -51,28 +46,27 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
         if timestamp:
             if curr_episode % opt.update_episode == 0 and curr_episode > 0:
                 torch.save(
-                    global_model.state_dict(), "{}/a3c_tetris".format(opt.model_path)
+                    global_model.state_dict(), "{}/a3c_tetris.pt".format(opt.model_path)
                 )
         local_model.load_state_dict(global_model.state_dict())
 
-        # if done:
-        #     hx = torch.zeros((1, 256), dtype=torch.float)
-        #     cx = torch.zeros((1, 256), dtype=torch.float)
-        # else:
-        #     hx = hx.detach()
-        #     cx = cx.detach()
-        # if torch.cuda.is_available():
-        #     hx = hx.cuda()
-        #     cx = cx.cuda()
-
-        log_probs = torch.zeros(opt.sync_steps, 1, device="cuda:0" if torch.cuda.is_available() else "cpu")
-        values = torch.zeros(opt.sync_steps, 1, device="cuda:0" if torch.cuda.is_available() else "cpu")
-        rewards = torch.zeros(opt.sync_steps, 1, device="cuda:0" if torch.cuda.is_available() else "cpu")
-        entropies = torch.zeros(opt.sync_steps, 1, device="cuda:0" if torch.cuda.is_available() else "cpu")
-        masks = torch.zeros(opt.sync_steps, 1, device="cuda:0" if torch.cuda.is_available() else "cpu")
+        log_probs = torch.zeros(
+            opt.sync_steps, 1, device="cuda:0" if torch.cuda.is_available() else "cpu"
+        )
+        values = torch.zeros(
+            opt.sync_steps, 1, device="cuda:0" if torch.cuda.is_available() else "cpu"
+        )
+        rewards = torch.zeros(
+            opt.sync_steps, 1, device="cuda:0" if torch.cuda.is_available() else "cpu"
+        )
+        entropies = torch.zeros(
+            opt.sync_steps, 1, device="cuda:0" if torch.cuda.is_available() else "cpu"
+        )
+        masks = torch.zeros(
+            opt.sync_steps, 1, device="cuda:0" if torch.cuda.is_available() else "cpu"
+        )
 
         for step in range(opt.sync_steps):
-            # policy, value, hx, cx = local_model(state, hx, cx)
             policy, value = local_model(state)
             probs = F.softmax(policy, dim=1)
             log_prob = F.log_softmax(policy, dim=1)
@@ -85,16 +79,18 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
             obs = transformImage(obs["matrix_image"])
             if torch.cuda.is_available():
                 obs = obs.cuda()
-            obs = torch.cat((state[1:], obs), dim=0)
+            state = torch.cat((state[1:], obs), dim=0)
 
             values[step] = value
             log_probs[step] = log_prob[0, action]
             rewards[step] = reward
             entropies[step] = entropy
-            masks[step] = bool(not done)
+            masks[step] = int(not done)
 
             if done:
                 curr_episode += 1
+                with global_eps.get_lock():
+                    global_eps.value += 1
                 writer.add_scalar(
                     "Score_Agent {}".format(index), info["score"], curr_episode
                 )
@@ -105,7 +101,7 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
                 )
                 obs, info = env.reset()
                 obs = transformImage(obs["matrix_image"])
-                state = torch.zeros((opt.sync_steps, 84, 84))
+                state = torch.zeros((opt.framestack, 84, 84))
                 state[0] = obs
                 if torch.cuda.is_available():
                     state = state.cuda()
@@ -127,7 +123,7 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
         actor_loss = (
             -(advantages.detach() * log_probs).mean() - opt.beta * entropy.mean()
         )
-        total_loss = actor_loss + critic_loss
+        total_loss = actor_loss + critic_loss * 0.5
         writer.add_scalar("Train_Agent {}/Loss".format(index), total_loss, curr_episode)
         optimizer.zero_grad()
         total_loss.backward()
@@ -141,7 +137,7 @@ def local_train(index, opt, global_model, optimizer, timestamp=False):
 
         optimizer.step()
 
-        if curr_episode == opt.max_episode:
+        if global_eps.value == opt.max_episode:
             print("Training process {} terminated".format(index))
             if timestamp:
                 end_time = timeit.default_timer()
@@ -156,29 +152,22 @@ def local_test(index, opt, global_model):
     local_model.eval()
     obs, info = env.reset()
     obs = transformImage(obs["matrix_image"])
-    state = torch.zeros((opt.sync_steps, 84, 84))
+    state = torch.zeros((opt.framestack, 84, 84))
     state[0] = obs
     done = True
     while True:
         if done:
             local_model.load_state_dict(global_model.state_dict())
-        # with torch.no_grad():
-        #     if done:
-        #         hx = torch.zeros((1, 256), dtype=torch.float)
-        #         cx = torch.zeros((1, 256), dtype=torch.float)
-        #     else:
-        #         hx = hx.detach()
-        #         cx = cx.detach()
 
-        # policy, value, hx, cx = local_model(state, hx, cx)
         policy, value = local_model(state)
         probs = F.softmax(policy, dim=1)
         action = torch.argmax(probs).item()
         obs, reward, done, _, info = env.step(action)
         obs = transformImage(obs["matrix_image"])
-        obs = torch.cat((state[1:], obs), dim=0)
+        state = torch.cat((state[1:], obs), dim=0)
         env.render()
         if done:
             obs, info = env.reset()
             obs = transformImage(obs["matrix_image"])
+            state = torch.zeros((opt.framestack, 84, 84))
             state[0] = obs

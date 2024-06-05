@@ -62,7 +62,7 @@ class TetrisEnv(gym.Env):
         self.game_over_screen = None
 
     def get_next_shape(self):
-        if self.game.block_placed % 7 == 0 and self.game.block_placed > 3:
+        if (self.game.block_placed - 4) % 7 == 0:
             random.shuffle(self.bag)
 
         next_shape = self.next_shapes.pop(0)
@@ -70,7 +70,7 @@ class TetrisEnv(gym.Env):
         self.next_shapes.append(
             self.bag[
                 (
-                    self.game.block_placed % 7
+                    (self.game.block_placed - 4) % 7
                     if self.game.block_placed > 3
                     else self.game.block_placed + 3
                 )
@@ -102,104 +102,43 @@ class TetrisEnv(gym.Env):
             holes = 0
             if max_row != 0:
                 for row in range(len(self.game.field_data) - 1, 20 - max_row, -1):
-                    if col == 0:
-                        left_side = True
-                    else:
-                        left_side = bool(self.game.field_data[row][col-1])
-                    if col == len(max_rows) - 1:
-                        right_side = True
-                    else:
-                        right_side = bool(self.game.field_data[row][col+1])
-                    if row == 19:
-                        bottom_side = True
-                    else:
-                        bottom_side = bool(self.game.field_data[row+1][col])
+                    # if col == 0:
+                    #     left_side = True
+                    # else:
+                    #     left_side = bool(self.game.field_data[row][col-1])
+                    # if col == len(max_rows) - 1:
+                    #     right_side = True
+                    # else:
+                    #     right_side = bool(self.game.field_data[row][col+1])
+                    # if row == 19:
+                    #     bottom_side = True
+                    # else:
+                    #     bottom_side = bool(self.game.field_data[row+1][col])
                     if (
                         not self.game.field_data[row][col]
-                        and self.game.field_data[row - 1][col]
-                        and bottom_side
-                        and left_side
-                        and right_side
+                        # and self.game.field_data[row - 1][col]
+                        # and bottom_side
+                        # and left_side
+                        # and right_side
                     ):
                         holes += 1
             holes_per_col.append(holes)
 
         return holes_per_col
 
-    def count_transitions(self):
-        col_transition = 0
-        for col in range(len(self.game.field_data[0])):
-            for row in range(len(self.game.field_data) - 1):
-                if row == len(self.game.field_data):
-                    break
-                elif bool(self.game.field_data[row + 1][col]) ^ bool(
-                    self.game.field_data[row][col]
-                ):
-                    col_transition += 1
-
-        row_transition = 0
-        for row in range(len(self.game.field_data)):
-            for col in range(len(self.game.field_data[0]) - 1):
-                if col == len(self.game.field_data[0]):
-                    break
-                elif bool(self.game.field_data[row][col + 1]) ^ bool(
-                    self.game.field_data[row][col]
-                ):
-                    row_transition += 1
-
-        return (row_transition, col_transition)
-
-    def count_wells(self):
-        wells = 0
-        for col in range(len(self.game.field_data[0]) - 1):
-            for row in range(len(self.game.field_data)):
-                cell = self.game.field_data[row][col]
-                if col == 0:
-                    if not cell and self.game.field_data[row][col + 1]:
-                        wells += 1
-                elif col == range(len(self.game.field_data[0]) - 1):
-                    if not cell and self.game.field_data[row][col - 1]:
-                        wells += 1
-                else:
-                    if (
-                        not cell
-                        and self.game.field_data[row][col + 1]
-                        and self.game.field_data[row][col - 1]
-                    ):
-                        wells += 1
-
-        return wells
-    
+   
     def calculate_bump(self, col_heights):
         bumpiness = 0
         for i in range(len(col_heights)-1):
             bumpiness += abs(col_heights[i] - col_heights[i + 1])
 
         return bumpiness
-    
-    def find_landing_height(self, col_heights):
-        rows = []
-        cols = []
-        for block in self.game.tetromino.blocks:
-            col, row = block.pos
-            rows.append(row)
-            cols.append(int(col))
-
-        landing_height = []
-        for col in cols:
-            landing_height.append(col_heights[col])
-
-        return landing_height
 
 
     def _get_info(self):
         col_heights = self.find_col_heights()
         holes = self.calculate_holes(col_heights)
         bumpiness = self.calculate_bump(col_heights)
-        row_transition, col_transition = self.count_transitions()
-        cumulated_wells = self.count_wells()
-        landing_height = max(self.find_landing_height(col_heights))
-
         return {
             "heights": sum(col_heights),
             "lines_cleared": self.game.last_deleted_rows,
@@ -208,25 +147,11 @@ class TetrisEnv(gym.Env):
             "score": self.game.current_scores,
             "total_lines": self.game.current_lines,
             "block_placed": self.game.block_placed,
-            "row_transitions": row_transition,
-            "col_transitions": col_transition,
-            "cumulative_wells": cumulated_wells,
-            "landing_height": landing_height,
         }
 
-    def _get_obs(self, info):
+    def _get_obs(self):
         return {
-            "matrix_image": self.matrix_screen_array,
-            # "features": np.array([
-            #     info["landing_height"],
-            #     info["lines_cleared"],
-            #     info["row_transitions"],
-            #     info["col_transitions"],
-            #     info["holes"],
-            #     info["cumulative_wells"]
-            # ], dtype=np.float32)
-            # "board_data": self.game.field_data,
-            # "preview_image": self.preview_screen_array,
+            "matrix_image": self.matrix_screen_array
         }
 
     def reset(self, seed=None, options=None):
@@ -248,60 +173,66 @@ class TetrisEnv(gym.Env):
         self.render()
 
         info = self._get_info()
-        observation = self._get_obs(info)
+        observation = self._get_obs()
 
         return observation, info
 
     def step(self, action):
-        """ 
-            0 Noop
-            1 Right
-            2 Left
-            3 RC
-            4 RCC
-            5 Soft drop
-            6 Hard drop
         """
-        penalty = 0
-
+            0 No rotation Noop
+            1 No rotation Right
+            2 No rotation Left
+            3 Rotate 90 Noop
+            4 Rotate 90 Right
+            5 Rotate 90 Left
+            6 Rotate 180 Noop
+            7 Rotate 180 Right
+            8 Rotate 180 Left
+            9 Rotate -90 Noop
+            10 Rotate -90 Right
+            11 Rotate -90 Left
+            12 Hard Drop
+        """
         if action == 0:
             pass
 
-        elif action in [1, 2]:
-            if self.game.input(1 if action == 1 else -1):
-                penalty += 10
 
-        elif action in [3, 4]:
-            if self.game.tetromino.rotate("right" if action == 3 else "left"):
-                penalty += 10
-        
-        else:  # drop
-            self.game.soft_drop() if action == 5 else self.game.drop()
+        if action in [1, 2]:
+            self.game.input(1 if action == 1 else -1)
+
+        if action in [3, 9]:
+            self.game.tetromino.rotate("right" if action == 3 else "left")
+
+        if action in [4, 5, 10, 11]:
+            self.game.tetromino.rotate("right" if action <= 5 else "left")
+            self.game.input(1 if action in [4, 10] else -1)
+
+        if action == 6:
+            self.game.tetromino.rotate("right", amount=2)
+
+        if action in [7, 8]:
+            self.game.tetromino.rotate("right", amount=2)
+            self.game.input(1 if action == 7 else -1)
+
+        if action == 12:  # drop
+            self.game.drop()
 
         self.render()
 
         info = self._get_info()
-        observation = self._get_obs(info)
+        observation = self._get_obs()
 
         reward = self.evaluate(info)
-        # reward -= penalty
 
         return observation, reward, self.game.tetromino.game_over, False, info
 
     def evaluate(self, info):
-        reward = (
-            -4 * info["holes"]
-            - info["cumulative_wells"]
-            - info["row_transitions"]
-            - info["col_transitions"]
-            - info["landing_height"]
-            + info["lines_cleared"] * 50
-        )
+        reward = - 0.51 * info["heights"] + 0.76 * info["total_lines"] - 0.36 * info["holes"] - 0.18 * info["bumpiness"]
 
         if self.game.tetromino.game_over:
-            return -2
+            return -100
         else:
-            return 10 ** info["lines_cleared"] * COL
+            return reward
         
 
     def render(self):
