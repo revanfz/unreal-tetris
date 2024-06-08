@@ -21,7 +21,19 @@ def transformImage(image):
         ]
     )
 
-    return transform(image)
+    
+    new_image = transform(image)
+    mean = new_image.mean()
+    std = new_image.std()
+
+    normalize = T.Compose(
+        [
+            T.Normalize(mean, std)
+        ]
+    )
+
+    new_image = normalize(new_image)
+    return new_image
 
 
 def local_train(index, opt, global_model, optimizer, global_eps, timestamp=False):
@@ -88,9 +100,6 @@ def local_train(index, opt, global_model, optimizer, global_eps, timestamp=False
             masks[step] = int(not done)
 
             if done:
-                curr_episode += 1
-                with global_eps.get_lock():
-                    global_eps.value += 1
                 writer.add_scalar(
                     "Score_Agent {}".format(index), info["score"], curr_episode
                 )
@@ -105,8 +114,6 @@ def local_train(index, opt, global_model, optimizer, global_eps, timestamp=False
                 state[0] = obs
                 if torch.cuda.is_available():
                     state = state.cuda()
-
-                print("Process {}. Finished episode {}".format(index, curr_episode))
                 break
 
         gae = 0.0
@@ -125,6 +132,7 @@ def local_train(index, opt, global_model, optimizer, global_eps, timestamp=False
         )
         total_loss = actor_loss + critic_loss * 0.5
         writer.add_scalar("Train_Agent {}/Loss".format(index), total_loss, curr_episode)
+        writer.add_scalar("Train All Agents/Loss", total_loss, global_eps.value)
         optimizer.zero_grad()
         total_loss.backward()
 
@@ -136,6 +144,12 @@ def local_train(index, opt, global_model, optimizer, global_eps, timestamp=False
             global_param._grad = local_param.grad
 
         optimizer.step()
+
+        
+        curr_episode += 1
+        with global_eps.get_lock():
+            global_eps.value += 1
+        print("Process {}. Finished episode {}".format(index, curr_episode))
 
         if global_eps.value == opt.max_episode:
             print("Training process {} terminated".format(index))

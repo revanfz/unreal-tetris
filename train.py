@@ -26,9 +26,9 @@ def get_args():
         "--gamma", type=float, default=0.99, help="discount factor for rewards"
     )
     parser.add_argument("--beta", type=float, default=0.01, help="entropy coefficient")
-    parser.add_argument("--sync-steps", type=int, default=20, help="jumlah step sebelum mengupdate parameter global")
+    parser.add_argument("--sync-steps", type=int, default=100, help="jumlah step sebelum mengupdate parameter global")
     parser.add_argument("--update-episode", type=int, default=50, help="jumlah episode sebelum menyimpan model")
-    parser.add_argument("--max-episode", type=int, default=1e1, help="Maksimal episode pelatihan")
+    parser.add_argument("--max-episode", type=int, default=1e6, help="Maksimal episode pelatihan")
     parser.add_argument("--num-agents", type=int, default=8, help="Jumlah agen yang berjalan secara asinkron")
     parser.add_argument("--log-path", type=str, default="tensorboard/a3c_tetris", help="direktori plotting tensorboard")
     parser.add_argument("--model-path", type=str, default="trained_models", help="direktori penyimpanan model haisl training")
