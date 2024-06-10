@@ -48,10 +48,10 @@ class Matrix:
     def drop(self):
         self.tetromino.drop_shape()
 
-    def calculate_score(self, num_lines):
-        if num_lines != 0:
-            self.current_lines += num_lines
-            self.current_scores += CLEAR_REWARDS[num_lines] * self.current_level
+    def calculate_score(self):
+        if self.last_deleted_rows != 0:
+            self.current_lines += self.last_deleted_rows
+            self.current_scores += CLEAR_REWARDS[self.last_deleted_rows] * self.current_level
 
             if self.current_lines % 10 == 0 and self.current_lines > 0:
                 self.current_level += 1
@@ -60,7 +60,6 @@ class Matrix:
                 self.timers["verticalMove"].duration = self.down_speed
 
             self.update_score(self.current_lines, self.current_scores, self.current_level)
-        self.last_deleted_rows = num_lines
 
     def create_new_tetromino(self):
         self.timers["verticalMove"].duration = self.down_speed
@@ -118,8 +117,9 @@ class Matrix:
             self.field_data = [[0 for x in range(COL)] for y in range(ROW)]
             for block in self.sprites:
                 self.field_data[int(block.pos.y)][int(block.pos.x)] = block
-
-        self.calculate_score(len(delete_rows))
+        
+        self.last_deleted_rows = len(delete_rows)
+        self.calculate_score()
 
     def run(self, display_surface):
         surface = pygame.Surface((MATRIX_WIDTH, MATRIX_HEIGHT))

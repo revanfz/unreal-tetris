@@ -73,7 +73,7 @@ class Tetromino:
         else:
             for block in self.blocks:
                 block.pos.x += amount
-        
+
         return False
 
     def check_horizontal_collision(self, amount):
@@ -101,18 +101,30 @@ class Tetromino:
         if self.shape != "O":
             pivot_pos = self.blocks[0].pos  # pivot point
             # new block position after rotating
-            new_block_position = [block.rotate(pivot_pos, direction, amount) for block in self.blocks]
+            new_block_position = [
+                block.rotate(pivot_pos, direction, amount) for block in self.blocks
+            ]
 
             # check collision
             for pos in new_block_position:
                 # horizontal
-                if pos.x < 0 or pos.x >= COL:
-                    return True
+                if pos.x < 0:
+                    distance = 0 - pos.x
+                    for position in new_block_position:
+                        position.x += distance
+
+                elif pos.x >= COL:
+                    distance = pos.x - COL + 1
+                    for position in new_block_position:
+                        position.x -= distance
 
                 # vertical / floor
                 if pos.y >= ROW:
-                    return True
-
+                    distance = pos.y - ROW + 1
+                    for position in new_block_position:
+                        position.y -= distance
+                        
+            for pos in new_block_position:
                 # field check (with other pieces)
                 if self.field_data[int(pos.y)][int(pos.x)]:
                     return True
@@ -121,6 +133,7 @@ class Tetromino:
                 block.pos = new_block_position[i]
 
         return False
+
 
 class Block(pygame.sprite.Sprite):
     def __init__(self, group, pos, color, image):
@@ -133,9 +146,8 @@ class Block(pygame.sprite.Sprite):
         self.rect = image.get_rect(topleft=self.pos * PIXEL)
 
     def rotate(self, pivot_pos, direction, amount=1):
-        multiplication = -1 if direction == 'left' else 1
+        multiplication = -1 if direction == "left" else 1
         return pivot_pos + (self.pos - pivot_pos).rotate(90 * multiplication * amount)
-        
 
     def update(self):
         self.rect.topleft = self.pos * PIXEL

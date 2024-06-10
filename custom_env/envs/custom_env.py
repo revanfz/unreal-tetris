@@ -9,7 +9,6 @@ from custom_env import game
 
 sys.path.append("/")
 
-from random import choice
 from gymnasium.spaces import Box, Dict, Discrete
 
 from custom_env.game.matrix import Matrix
@@ -20,7 +19,6 @@ from custom_env.game.settings import (
     WINDOW_WIDTH,
     PIXEL,
     IMG_DIR,
-    COL
 )
 from custom_env.game.preview import Preview
 from custom_env.game.score import Score
@@ -43,13 +41,7 @@ class TetrisEnv(gym.Env):
                     high=255,
                     shape=(MATRIX_HEIGHT, MATRIX_WIDTH, 3),
                     dtype=np.uint8,
-                ),
-                # "features": Box(
-                #     low=0,
-                #     high=50,
-                #     shape=(6,),
-                #     dtype=np.float32
-                # )
+                )
             }
         )
         self.action_space = Discrete(13)
@@ -66,7 +58,6 @@ class TetrisEnv(gym.Env):
             random.shuffle(self.bag)
 
         next_shape = self.next_shapes.pop(0)
-        # self.next_shapes.append('Z')
         self.next_shapes.append(
             self.bag[
                 (
@@ -102,25 +93,7 @@ class TetrisEnv(gym.Env):
             holes = 0
             if max_row != 0:
                 for row in range(len(self.game.field_data) - 1, 20 - max_row, -1):
-                    # if col == 0:
-                    #     left_side = True
-                    # else:
-                    #     left_side = bool(self.game.field_data[row][col-1])
-                    # if col == len(max_rows) - 1:
-                    #     right_side = True
-                    # else:
-                    #     right_side = bool(self.game.field_data[row][col+1])
-                    # if row == 19:
-                    #     bottom_side = True
-                    # else:
-                    #     bottom_side = bool(self.game.field_data[row+1][col])
-                    if (
-                        not self.game.field_data[row][col]
-                        # and self.game.field_data[row - 1][col]
-                        # and bottom_side
-                        # and left_side
-                        # and right_side
-                    ):
+                    if (not self.game.field_data[row][col]):
                         holes += 1
             holes_per_col.append(holes)
 
@@ -196,9 +169,17 @@ class TetrisEnv(gym.Env):
         if action == 0:
             pass
 
-
         if action in [1, 2]:
             self.game.input(1 if action == 1 else -1)
+
+        # if action in [3, 4]:
+        #     self.game.tetromino.rotate("right" if action == 3 else "left")
+
+        # if action == 5:
+        #     self.game.soft_drop()
+
+        # if action == 6:
+        #     self.game.drop()
 
         if action in [3, 9]:
             self.game.tetromino.rotate("right" if action == 3 else "left")
@@ -228,11 +209,10 @@ class TetrisEnv(gym.Env):
 
     def evaluate(self, info):
         reward = - 0.51 * info["heights"] + 0.76 * info["total_lines"] - 0.36 * info["holes"] - 0.18 * info["bumpiness"]
-
         if self.game.tetromino.game_over:
-            return -100
-        else:
-            return reward
+            reward -= 50
+        # else:
+        return reward
         
 
     def render(self):
