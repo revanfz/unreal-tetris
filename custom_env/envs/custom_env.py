@@ -209,9 +209,17 @@ class TetrisEnv(gym.Env):
 
     def evaluate(self, info):
         reward = - 0.51 * info["heights"] + 0.76 * info["total_lines"] - 0.36 * info["holes"] - 0.18 * info["bumpiness"]
+        reward += 10 * info["lines_cleared"] ** 2
+        reward -= 0.5
+        reward += info["score"]
         if self.game.tetromino.game_over:
             reward -= 50
-        # else:
+        else:
+            if self.game.block_placed > self.game.last_block_placed:
+                self.game.last_block_placed += 1
+                reward += 1
+            if self.game.block_placed % 10:
+                reward += 5
         return reward
         
 

@@ -59,6 +59,6 @@ class ActorCritic(nn.Module):
         advantage = td_errors - values
         critic_loss = advantage.pow(2).mean()
         actor_loss = -(log_probs * advantage.detach()).mean() - beta * entropies.mean()
-        total_loss = actor_loss + 0.5 * critic_loss
+        total_loss = actor_loss + critic_loss
 
         return total_loss

@@ -64,6 +64,7 @@ class Matrix:
     def create_new_tetromino(self):
         self.timers["verticalMove"].duration = self.down_speed
         self.speedup = False
+        self.last_block_placed = self.block_placed
         self.block_placed += 1
         self.check_finished_row()
         self.tetromino = Tetromino(
@@ -130,8 +131,10 @@ class Matrix:
         surface.fill((67, 70, 75))
         # self.sprites.draw(self.surface)
         for sprite in self.sprites:
-            image = pygame.image.load(sprite.image)
-            image = pygame.transform.scale(image, (PIXEL, PIXEL))
+            # image = pygame.image.load(sprite.image)
+            # image = pygame.transform.scale(image, (PIXEL, PIXEL))
+            image = pygame.Surface([PIXEL, PIXEL])
+            image.fill(color=sprite.color)
             surface.blit(image, sprite.rect)
             
         display_surface.blit(surface, (PIXEL, PIXEL))

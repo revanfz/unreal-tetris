@@ -1,6 +1,5 @@
 import torch
 import timeit
-import pygame
 import gymnasium as gym
 import torch.nn.functional as F
 import torchvision.transforms as T
@@ -8,10 +7,9 @@ import torchvision.transforms as T
 import custom_env
 
 from model import ActorCritic
+from optimizer import SharedAdam
 from tensorboardX import SummaryWriter
 from torch.distributions import Categorical
-
-from optimizer import SharedAdam
 
 
 def transformImage(image):
@@ -20,6 +18,7 @@ def transformImage(image):
             T.ToTensor(),
             T.Grayscale(num_output_channels=1),
             T.Resize((84, 84)),
+            T.RandomHorizontalFlip(1),
         ]
     )
 
@@ -31,6 +30,7 @@ def local_train(
     opt: tuple,
     global_model: ActorCritic,
     optimizer: SharedAdam,
+    global_episodes,
     global_steps,
     timestamp=False,
 ):
@@ -38,9 +38,7 @@ def local_train(
     if timestamp:
         start_time = timeit.default_timer()
     writer = SummaryWriter(opt.log_path)
-    env = gym.make(
-        "SmartTetris-v0", render_mode="human" if index == 0 else opt.render_mode
-    )
+    env = gym.make("SmartTetris-v0", render_mode=opt.render_mode)
     local_model = ActorCritic(4, env.action_space.n)
     if local_model.device != "cpu":
         local_model.cuda()
@@ -52,10 +50,11 @@ def local_train(
     state[-1] = obs
     done = True
     curr_episode = 0
+    num_game = 0
 
     while global_steps.value <= opt.max_steps:
         if timestamp:
-            if curr_episode % opt.update_episode == 0 and curr_episode > 0:
+            if global_steps.value % opt.save_interval == 0 and global_steps.value > 0:
                 torch.save(
                     global_model.state_dict(), "{}/a3c_tetris.pt".format(opt.model_path)
                 )
@@ -110,33 +109,35 @@ def local_train(
 
         optimizer.step()
 
-        writer.add_scalar("Train_Agent {}/Loss".format(index), total_loss, curr_episode)
         curr_episode += 1
+        with global_episodes.get_lock():
+            global_episodes.value += 1
+        writer.add_scalar("Agent {}/Loss".format(index), total_loss, curr_episode)
+        writer.add_scalar("Global Model/Loss", total_loss, global_episodes.value)
 
         if done:
+            num_game += 1
             writer.add_scalar(
-                "Block Placed_Agent {}".format(index),
+                "Block Placed Agent {}".format(index),
                 info["block_placed"],
-                curr_episode,
+                num_game,
             )
             writer.add_scalar(
-                "Lines Cleared_Agent {}".format(index),
+                "Lines Cleared Agent {}".format(index),
                 info["total_lines"],
-                curr_episode,
+                num_game,
             )
             obs, info = env.reset()
             obs = transformImage(obs["matrix_image"])
             state = torch.zeros((opt.framestack, 84, 84), device=local_model.device)
             state[-1] = obs
 
-        print("Process {}. Finished episode {}".format(index, curr_episode))
+        print("Process {} Finished episode {}.".format(index, curr_episode))
 
-        if global_steps.value >= opt.max_steps:
-            print("Training process {} terminated".format(index))
-            if timestamp:
-                end_time = timeit.default_timer()
-                print("The code runs for %.2f s " % (end_time - start_time))
-            return
+    print("Training process {} terminated".format(index))
+    if timestamp:
+        end_time = timeit.default_timer()
+        print("The code runs for %.2f s " % (end_time - start_time))
 
 
 def local_test(index, opt, global_model):
@@ -144,24 +145,26 @@ def local_test(index, opt, global_model):
     env = gym.make("SmartTetris-v0", render_mode="human")
     local_model = ActorCritic(4, env.action_space.n)
     local_model.eval()
+
     obs, info = env.reset()
     obs = transformImage(obs["matrix_image"])
     state = torch.zeros((opt.framestack, 84, 84))
     state[-1] = obs
     done = True
+
     while True:
         if done:
             local_model.load_state_dict(global_model.state_dict())
 
-        policy, value = local_model(state)
+        policy, _ = local_model(state)
         probs = F.softmax(policy, dim=1)
         action = torch.argmax(probs).item()
-        obs, reward, done, _, info = env.step(action)
+        obs, _, done, _, _ = env.step(action)
         obs = transformImage(obs["matrix_image"])
         state = torch.cat((state[1:], obs), dim=0)
         env.render()
         if done:
-            obs, info = env.reset()
+            obs, _ = env.reset()
             obs = transformImage(obs["matrix_image"])
             state = torch.zeros((opt.framestack, 84, 84))
             state[-1] = obs

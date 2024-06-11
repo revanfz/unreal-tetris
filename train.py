@@ -29,17 +29,17 @@ def get_args():
     parser.add_argument(
         "--sync-steps",
         type=int,
-        default=20,
+        default=48,
         help="jumlah step sebelum mengupdate parameter global",
     )
     parser.add_argument(
-        "--update-episode",
+        "--save-interval",
         type=int,
-        default=50,
-        help="jumlah episode sebelum menyimpan model",
+        default=480,
+        help="jumlah step sebelum menyimpan model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=1e6, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=1e7, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--num-agents",
@@ -104,17 +104,18 @@ def train(opt):
         optimizer = SharedAdam(global_model.parameters(), lr=opt.lr)
         processes = []
         global_steps = mp.Value("i", 0)
+        global_episodes = mp.Value("i", 0)
         # total_episode, res_queue = mp.Value("i", 0), mp.Queue()
         for index in range(opt.num_agents):
             if index == 0:
                 process = mp.Process(
                     target=local_train,
-                    args=(index, opt, global_model, optimizer, global_steps, True),
+                    args=(index, opt, global_model, optimizer, global_episodes, global_steps, True),
                 )
             else:
                 process = mp.Process(
                     target=local_train,
-                    args=(index, opt, global_model, optimizer, global_steps),
+                    args=(index, opt, global_model, optimizer, global_episodes, global_steps),
                 )
             process.start()
             processes.append(process)

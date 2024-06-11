@@ -123,7 +123,7 @@ class Tetromino:
                     distance = pos.y - ROW + 1
                     for position in new_block_position:
                         position.y -= distance
-                        
+
             for pos in new_block_position:
                 # field check (with other pieces)
                 if self.field_data[int(pos.y)][int(pos.x)]:
@@ -138,12 +138,15 @@ class Tetromino:
 class Block(pygame.sprite.Sprite):
     def __init__(self, group, pos, color, image):
         super().__init__(group)
+        self.color = color
         self.image = image
-        image = pygame.image.load(image)
-        image = pygame.transform.scale(image, (PIXEL, PIXEL))
+        # image = pygame.image.load(image)
+        # image = pygame.transform.scale(image, (PIXEL, PIXEL))
+        surface = pygame.Surface([PIXEL, PIXEL])
+        surface.fill(color=self.color)
         self.pos = pygame.Vector2(pos) + pygame.Vector2(COL // 2 - 1, -1)
 
-        self.rect = image.get_rect(topleft=self.pos * PIXEL)
+        self.rect = surface.get_rect(topleft=self.pos * PIXEL)
 
     def rotate(self, pivot_pos, direction, amount=1):
         multiplication = -1 if direction == "left" else 1
