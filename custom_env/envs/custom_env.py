@@ -44,7 +44,7 @@ class TetrisEnv(gym.Env):
                 )
             }
         )
-        self.action_space = Discrete(13)
+        self.action_space = Discrete(7)
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
@@ -153,6 +153,15 @@ class TetrisEnv(gym.Env):
     def step(self, action):
         """
             0 No rotation Noop
+            1 Right
+            2 Left
+            3 Rotate Right
+            4 Rotate Left
+            5 Soft drop
+            6 Hard drop
+
+            Kalo 13
+            0 No rotation Noop
             1 No rotation Right
             2 No rotation Left
             3 Rotate 90 Noop
@@ -172,46 +181,48 @@ class TetrisEnv(gym.Env):
         if action in [1, 2]:
             self.game.input(1 if action == 1 else -1)
 
-        # if action in [3, 4]:
-        #     self.game.tetromino.rotate("right" if action == 3 else "left")
-
-        # if action == 5:
-        #     self.game.soft_drop()
-
-        # if action == 6:
-        #     self.game.drop()
-
-        if action in [3, 9]:
+        if action in [3, 4]:
             self.game.tetromino.rotate("right" if action == 3 else "left")
 
-        if action in [4, 5, 10, 11]:
-            self.game.tetromino.rotate("right" if action <= 5 else "left")
-            self.game.input(1 if action in [4, 10] else -1)
+        if action == 5:
+            self.game.soft_drop()
 
         if action == 6:
-            self.game.tetromino.rotate("right", amount=2)
-
-        if action in [7, 8]:
-            self.game.tetromino.rotate("right", amount=2)
-            self.game.input(1 if action == 7 else -1)
-
-        if action == 12:  # drop
             self.game.drop()
+
+        # if action in [3, 9]:
+        #     self.game.tetromino.rotate("right" if action == 3 else "left")
+
+        # if action in [4, 5, 10, 11]:
+        #     self.game.tetromino.rotate("right" if action <= 5 else "left")
+        #     self.game.input(1 if action in [4, 10] else -1)
+
+        # if action == 6:
+        #     self.game.tetromino.rotate("right", amount=2)
+
+        # if action in [7, 8]:
+        #     self.game.tetromino.rotate("right", amount=2)
+        #     self.game.input(1 if action == 7 else -1)
+
+        # if action == 12:  # drop
+        #     self.game.drop()
 
         self.render()
 
         info = self._get_info()
         observation = self._get_obs()
 
-        reward = self.evaluate(info)
+        reward = self.evaluate(info, action)
 
         return observation, reward, self.game.tetromino.game_over, False, info
 
-    def evaluate(self, info):
+    def evaluate(self, info, action):
         reward = - 0.51 * info["heights"] + 0.76 * info["total_lines"] - 0.36 * info["holes"] - 0.18 * info["bumpiness"]
         reward += 10 * info["lines_cleared"] ** 2
-        reward -= 0.5
         reward += info["score"]
+
+        if action not in [0, 5, 6]:
+            reward -= 0.1
         if self.game.tetromino.game_over:
             reward -= 50
         else:
@@ -220,6 +231,7 @@ class TetrisEnv(gym.Env):
                 reward += 1
             if self.game.block_placed % 10:
                 reward += 5
+
         return reward
         
 

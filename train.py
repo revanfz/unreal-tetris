@@ -127,7 +127,7 @@ def train(opt):
         processes.append(process)
         for process in processes:
             process.join()
-    except (KeyboardInterrupt, mp.ProcessError) as e:
+    except (KeyboardInterrupt, mp.ProcessError):
         print("Multiprocessing dihentikan...")
         raise KeyboardInterrupt
 
@@ -136,7 +136,6 @@ if __name__ == "__main__":
     try:
         opt = get_args()
         train(opt)
-    except KeyboardInterrupt as e:
-        print(e)
+    except KeyboardInterrupt:
         print("Program dihentikan...")
         sys.exit()
