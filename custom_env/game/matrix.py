@@ -24,7 +24,6 @@ class Matrix:
         self.field_data = [[0 for x in range(COL)] for y in range(ROW)]
 
         self.tetromino = Tetromino(
-            # choice(list(TETROMINOS.keys())),
             initial_shape,
             self.sprites,
             self.create_new_tetromino,
@@ -33,17 +32,17 @@ class Matrix:
 
         self.down_speed = FALL_SPEED
         self.down_speed_faster = self.down_speed * 0.25
-        self.speedup = False
 
         self.timers = {
             "verticalMove": Timer(self.down_speed, True, self.move_down),
             # "horizontalMove": Timer(MOVE_WAIT_TIME),
             # "rotate": Timer(ROTATE_WAIT_TIME),
         }
-        self.timers["verticalMove"].activate()
+        # self.timers["verticalMove"].activate()
 
     def soft_drop(self):
-        self.tetromino.soft_drop()
+        # self.tetromino.soft_drop()
+        self.move_down()
 
     def drop(self):
         self.tetromino.drop_shape()
@@ -63,7 +62,6 @@ class Matrix:
 
     def create_new_tetromino(self):
         self.timers["verticalMove"].duration = self.down_speed
-        self.speedup = False
         self.last_block_placed = self.block_placed
         self.block_placed += 1
         self.check_finished_row()
@@ -122,6 +120,23 @@ class Matrix:
         self.last_deleted_rows = len(delete_rows)
         self.calculate_score()
 
+    def get_falling_block(self):
+        surface = pygame.Surface((MATRIX_WIDTH, MATRIX_HEIGHT))
+        self.sprites.update()
+        surface.fill((67, 70, 75))
+        
+        block_copy = self.tetromino.blocks.copy()
+        for block in block_copy:
+            block.rect.y += PIXEL * 2
+            # image = pygame.Surface([PIXEL, PIXEL])
+            # image.fill(color=sprite.color)
+            image = pygame.image.load(block.image)
+            image = pygame.transform.scale(image, (PIXEL, PIXEL))
+            surface.blit(image, block.rect)
+
+        return surface
+        
+
     def run(self, display_surface):
         surface = pygame.Surface((MATRIX_WIDTH, MATRIX_HEIGHT))
         rect = surface.get_rect(topleft=(PIXEL, PIXEL))
@@ -131,10 +146,10 @@ class Matrix:
         surface.fill((67, 70, 75))
         # self.sprites.draw(self.surface)
         for sprite in self.sprites:
-            # image = pygame.image.load(sprite.image)
-            # image = pygame.transform.scale(image, (PIXEL, PIXEL))
-            image = pygame.Surface([PIXEL, PIXEL])
-            image.fill(color=sprite.color)
+            image = pygame.image.load(sprite.image)
+            image = pygame.transform.scale(image, (PIXEL, PIXEL))
+            # image = pygame.Surface([PIXEL, PIXEL])
+            # image.fill(color=sprite.color)
             surface.blit(image, sprite.rect)
             
         display_surface.blit(surface, (PIXEL, PIXEL))

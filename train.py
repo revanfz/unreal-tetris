@@ -4,13 +4,14 @@ import torch
 import shutil
 import argparse
 import gymnasium as gym
+import matplotlib.pyplot as plt
 import torch.multiprocessing as mp
 
 import custom_env
 
-from model import ActorCritic
+from model import ActorCriticFF
 from optimizer import SharedAdam
-from process import local_test, local_train
+from process import local_train
 
 
 def get_args():
@@ -21,7 +22,7 @@ def get_args():
             UNTUK MENGHASILKAN AGEN CERDAS (STUDI KASUS: PERMAINAN TETRIS)
         """
     )
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=7e-4, help="Learning rate")
     parser.add_argument(
         "--gamma", type=float, default=0.99, help="discount factor for rewards"
     )
@@ -29,22 +30,22 @@ def get_args():
     parser.add_argument(
         "--sync-steps",
         type=int,
-        default=48,
+        default=5,
         help="jumlah step sebelum mengupdate parameter global",
     )
     parser.add_argument(
         "--save-interval",
         type=int,
-        default=480,
+        default=5000,
         help="jumlah step sebelum menyimpan model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=1e7, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=1e6, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--num-agents",
         type=int,
-        default=8,
+        default=16,
         help="Jumlah agen yang berjalan secara asinkron",
     )
     parser.add_argument(
@@ -91,42 +92,74 @@ def train(opt):
         mp.get_context("spawn")
         env = gym.make("SmartTetris-v0")
 
-        global_model = ActorCritic(4, env.action_space.n)
+        global_model = ActorCriticFF(opt.framestack, env.action_space.n)
         if torch.cuda.is_available():
             global_model.cuda()
         global_model.share_memory()
+
+        del env
+
+        optimizer = SharedAdam(global_model.parameters(), lr=opt.lr)
+        optimizer.share_memory()
 
         if opt.load_model:
             file_ = "{}/a3c_tetris.pt".format(opt.model_path)
             if os.path.isfile(file_):
                 global_model.load_state_dict(torch.load(file_))
 
-        optimizer = SharedAdam(global_model.parameters(), lr=opt.lr)
         processes = []
         global_steps = mp.Value("i", 0)
         global_episodes = mp.Value("i", 0)
-        # total_episode, res_queue = mp.Value("i", 0), mp.Queue()
+        global_rewards = mp.Value("f", 0)
+        res_queue = mp.Queue()
         for index in range(opt.num_agents):
             if index == 0:
                 process = mp.Process(
                     target=local_train,
-                    args=(index, opt, global_model, optimizer, global_episodes, global_steps, True),
+                    args=(
+                        index,
+                        opt,
+                        global_model,
+                        optimizer,
+                        global_episodes,
+                        global_steps,
+                        global_rewards,
+                        res_queue,
+                        True,
+                    ),
                 )
             else:
                 process = mp.Process(
                     target=local_train,
-                    args=(index, opt, global_model, optimizer, global_episodes, global_steps),
+                    args=(
+                        index,
+                        opt,
+                        global_model,
+                        optimizer,
+                        global_episodes,
+                        global_steps,
+                        global_rewards,
+                        res_queue,
+                    ),
                 )
             process.start()
             processes.append(process)
 
-        process = mp.Process(
-            target=local_test, args=(opt.num_agents, opt, global_model)
-        )
-        process.start()
-        processes.append(process)
-        for process in processes:
-            process.join()
+            res = []
+            while True:
+                r = res_queue.get()
+                if r is not None:
+                    res.append(r)
+                else:
+                    break
+            for process in processes:
+                process.join()
+
+            # plt.plot(res)
+            # plt.ylabel("Moving average ep reward")
+            # plt.xlabel("Episode")
+            # plt.show()
+            
     except (KeyboardInterrupt, mp.ProcessError):
         print("Multiprocessing dihentikan...")
         raise KeyboardInterrupt

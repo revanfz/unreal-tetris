@@ -5,8 +5,7 @@ import torch.nn.functional as F
 
 import custom_env
 
-from model import ActorCritic
-from process import transformImage
+from model import ActorCriticFF, ActorCriticLSTM
 
 
 def get_args():
@@ -25,38 +24,47 @@ def get_args():
 def test(opt):
     torch.manual_seed(42)
     env = gym.make("SmartTetris-v0", render_mode="human")
-    model = ActorCritic(4, env.action_space.n)
+    model = ActorCriticLSTM(2, env.action_space.n)
     if torch.cuda.is_available():
-        model.load_state_dict(torch.load(f"{opt.model_path}/a3c_tetris.pt"))
+        model.load_state_dict(torch.load(f"{opt.model_path}/a3c_tetris_lstm.pt"))
         model.cuda()
     else:
-        model.load_state_dict(torch.load(f"{opt.mode_path}/a3c_tetris.pt", map_location=lambda storage, loc: storage))
+        model.load_state_dict(torch.load(f"{opt.mode_path}/a3c_tetris_lstm.pt", map_location=lambda storage, loc: storage))
 
     model.eval()
-    obs, info = env.reset()
-    obs = transformImage(obs["matrix_image"])
-    state = torch.zeros((opt.framestack, 84, 84))
+    state, info = env.reset()
+    
+    matrix_image = torch.from_numpy(state['matrix_image']).to(model.device)
+    falling_shape = torch.from_numpy(state['falling_shape']).to(model.device)
+    state = torch.cat((matrix_image, falling_shape), dim=0).to(model.device)
     if torch.cuda.is_available():
         state = state.cuda()
-    state[0] = obs
     done = True
+
     while True:
-        policy, value = model(state)
+        if done:
+            hx = torch.zeros((1, 256), dtype=torch.float)
+            cx = torch.zeros((1, 256), dtype=torch.float)
+        else:
+            hx = hx.detach()
+            cx = cx.detach()
+        if model.device == "cuda":
+            hx = hx.cuda()
+            cx = cx.cuda()
+
+        policy, value, hx, cx = model(state, hx, cx)
         probs = F.softmax(policy, dim=1)
-        print(probs)
         action = torch.argmax(probs).item()
-        action = int(action)
-        obs, reward, done, _, info = env.step(action)
-        obs = transformImage(obs["matrix_image"])
-        if torch.cuda.is_available():
-            obs = obs.cuda()
-        state = torch.cat((state[1:], obs), dim=0)
+        state, reward, done, _, info = env.step(action)
+        matrix_image = torch.from_numpy(state['matrix_image']).to(model.device)
+        falling_shape = torch.from_numpy(state['falling_shape']).to(model.device)
+        state = torch.cat((matrix_image, falling_shape), dim=0).to(model.device)
 
         if done:
-            obs, info = env.reset()
-            obs = transformImage(obs["matrix_image"])
-            state = torch.zeros((opt.framestack, 84, 84))
-            state[0] = obs
+            state, info = env.reset()
+            matrix_image = torch.from_numpy(state['matrix_image']).to(model.device)
+            falling_shape = torch.from_numpy(state['falling_shape']).to(model.device)
+            state = torch.cat((matrix_image, falling_shape), dim=0).to(model.device)
         
         if torch.cuda.is_available():
             state = state.cuda()

@@ -11,7 +11,7 @@ SCOREBAR_HEIGHT = 1 - PREVIEW_HEIGHT
 WINDOW_WIDTH = MATRIX_WIDTH + SIDEBAR_WIDTH + PIXEL * 3
 WINDOW_HEIGHT = MATRIX_HEIGHT + PIXEL * 2
 
-FALL_SPEED = 150
+FALL_SPEED = 120
 ROTATE_WAIT_TIME = 50
 MOVE_WAIT_TIME = 30
 
@@ -22,7 +22,7 @@ TETROMINOS_IMG_DIR = IMG_DIR + "/tetrominos"
 TETROMINOS = {
     "Z": {
         "id": 1,
-        "shape": [(0, 0), (-1, -1), (0, -1), (1, 0)],
+        "shape": [(0, 0), (0, -1), (1, 0), (-1, -1)],
         "color": "#FF6347",
         "image": "Z.png",
         "type": [1, 0, 0, 0, 0, 0, 0],
@@ -36,7 +36,7 @@ TETROMINOS = {
     },
     "O": {
         "id": 3,
-        "shape": [(0, 0), (0, 1), (1, 0), (1, 1)],
+        "shape": [(1, -1), (1, 0), (0, -1), (0, 0)],
         "color": "#FFFF00",
         "image": "O.png",
         "type": [0, 0, 1, 0, 0, 0, 0],
@@ -51,13 +51,13 @@ TETROMINOS = {
     "J": {
         "id": 5,
         "shape": [(0, 0), (-1, 0), (1, 0), (-1, -1)],
-        "color": "#0000ff",
+        "color": "#aabbff",
         "image": "J.png",
         "type": [0, 0, 0, 0, 1, 0, 0],
     },
     "I": {
         "id": 6,
-        "shape": [(1, 0), (-1, 0), (0, 0), (2, 0)],
+        "shape": [(1, -1), (-1, -1), (0, -1), (2, -1)],
         "color": "#00FFFF",
         "image": "I.png",
         "type": [0, 0, 0, 0, 0, 1, 0],
@@ -65,7 +65,7 @@ TETROMINOS = {
     "T": {
         "id": 7,
         "shape": [(0, 0), (-1, 0), (0, -1), (1, 0)],
-        "color": "#9932CC",
+        "color": "#ffbbaa",
         "image": "T.png",
         "type": [0, 0, 0, 0, 0, 0, 1],
     },

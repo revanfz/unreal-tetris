@@ -16,13 +16,6 @@ class Tetromino:
         self.field_data = field_data
         self.game_over = False
 
-    def soft_drop(self):
-        if self.check_vertical_collision(1):
-            pass
-        else:
-            for block in self.blocks:
-                block.pos.y += 1
-
     def drop_shape(self):
         # y baris, x kolom
         lowest_row_dict = {}
@@ -50,6 +43,8 @@ class Tetromino:
 
         for block in self.blocks:
             block.pos.y += distance - 1
+
+        self.move_down()
 
     def set_game_over(self):
         self.game_over = True
@@ -140,10 +135,11 @@ class Block(pygame.sprite.Sprite):
         super().__init__(group)
         self.color = color
         self.image = image
-        # image = pygame.image.load(image)
-        # image = pygame.transform.scale(image, (PIXEL, PIXEL))
+        image = pygame.image.load(image)
+        image = pygame.transform.scale(image, (PIXEL, PIXEL))
         surface = pygame.Surface([PIXEL, PIXEL])
         surface.fill(color=self.color)
+        surface.blit(image, (0 ,0))
         self.pos = pygame.Vector2(pos) + pygame.Vector2(COL // 2 - 1, -1)
 
         self.rect = surface.get_rect(topleft=self.pos * PIXEL)
@@ -158,7 +154,7 @@ class Block(pygame.sprite.Sprite):
     def horizontal_collide(self, target: int, field_data):
         if not 0 <= target < COL:
             return True
-        if field_data[int(self.pos.y)][target]:
+        if field_data[int(self.pos.y) if self.pos.y > 0 else 0][target]:
             return True
 
         return False
