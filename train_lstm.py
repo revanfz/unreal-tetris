@@ -45,7 +45,7 @@ def get_args():
     parser.add_argument(
         "--num-agents",
         type=int,
-        default=8,
+        default=10,
         help="Jumlah agen yang berjalan secara asinkron",
     )
     parser.add_argument(
@@ -107,7 +107,9 @@ def train(opt):
         processes = []
         global_steps = mp.Value("i", 0)
         global_episodes = mp.Value("i", 0)
-        res_queue = mp.Queue()
+        episode_rewards = mp.Queue()
+        step_rewards =  mp.Queue()
+        model_losses = mp.Queue()
         
         for index in range(opt.num_agents):
             process = mp.Process(
@@ -119,26 +121,37 @@ def train(opt):
                     optimizer,
                     global_episodes,
                     global_steps,
-                    res_queue,
+                    episode_rewards,
+                    step_rewards,
+                    model_losses
                 )
             )
             process.start()
             processes.append(process)
 
-        # res = []
-        # while True:
-        #     r = res_queue.get()
-        #     if r is not None:
-        #         res.append(r)
-        #     else:
-        #         break
+        res = [[] for _ in range(3)]
+        for i, training_res in enumerate([episode_rewards, step_rewards, model_losses]):
+            while True:
+                r = training_res.get()
+                if r is not None:
+                    res[i].append(r)
+                else:
+                    break
+
         for process in processes:
             process.join()
 
-        # plt.plot(res)
-        # plt.ylabel("Moving average ep reward")
-        # plt.xlabel("Episode")
-        # plt.show()
+        fig, axs = plt.subplots(3, 1, figsize=(10, 15))
+        labels = ["Moving average ep reward", "Step reward", "Model losses"]
+        xlabels = ["Episode", "Step", "Episode"]
+
+        for i in range(3):
+            axs[i].plot(res[i])
+            axs[i].set_ylabel(labels[i])
+            axs[i].set_xlabel(xlabels[i])
+
+        plt.tight_layout()
+        plt.show()
 
     except (KeyboardInterrupt, mp.ProcessError):
         print("Multiprocessing dihentikan...")

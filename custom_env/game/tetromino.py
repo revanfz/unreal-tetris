@@ -138,7 +138,7 @@ class Block(pygame.sprite.Sprite):
         image = pygame.image.load(image)
         image = pygame.transform.scale(image, (PIXEL, PIXEL))
         surface = pygame.Surface([PIXEL, PIXEL])
-        surface.fill(color=self.color)
+        # surface.fill(color=self.color)
         surface.blit(image, (0 ,0))
         self.pos = pygame.Vector2(pos) + pygame.Vector2(COL // 2 - 1, -1)
 

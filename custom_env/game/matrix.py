@@ -1,6 +1,6 @@
 import pygame
 from .settings import *
-from .tetromino import Tetromino
+from .tetromino import Tetromino, Block
 from .timer import Timer
 from numpy import uint8, zeros
 from random import choice
@@ -34,7 +34,7 @@ class Matrix:
         self.down_speed_faster = self.down_speed * 0.25
 
         self.timers = {
-            "verticalMove": Timer(self.down_speed, True, self.move_down),
+            # "verticalMove": Timer(self.down_speed, True, self.move_down),
             # "horizontalMove": Timer(MOVE_WAIT_TIME),
             # "rotate": Timer(ROTATE_WAIT_TIME),
         }
@@ -56,12 +56,12 @@ class Matrix:
                 self.current_level += 1
                 self.down_speed *= 0.75
                 self.down_speed_faster = self.down_speed * 0.25
-                self.timers["verticalMove"].duration = self.down_speed
+                # self.timers["verticalMove"].duration = self.down_speed
 
             self.update_score(self.current_lines, self.current_scores, self.current_level)
 
     def create_new_tetromino(self):
-        self.timers["verticalMove"].duration = self.down_speed
+        # self.timers["verticalMove"].duration = self.down_speed
         self.last_block_placed = self.block_placed
         self.block_placed += 1
         self.check_finished_row()
@@ -120,21 +120,36 @@ class Matrix:
         self.last_deleted_rows = len(delete_rows)
         self.calculate_score()
 
-    def get_falling_block(self):
-        surface = pygame.Surface((MATRIX_WIDTH, MATRIX_HEIGHT))
+    def get_falling_block(self, falling_tetromino: Tetromino, next_tetromino: str):
+        falling_surface = pygame.Surface((84, 84))
+        next_surface = pygame.Surface((84, 84))
         self.sprites.update()
-        surface.fill((67, 70, 75))
+        falling_surface.fill((67, 70, 75))
+        next_surface.fill((67, 70, 75))
         
-        block_copy = self.tetromino.blocks.copy()
-        for block in block_copy:
-            block.rect.y += PIXEL * 2
-            # image = pygame.Surface([PIXEL, PIXEL])
-            # image.fill(color=sprite.color)
+        block_shape = falling_tetromino.shape
+        falling_tetromino = falling_tetromino.blocks.copy()
+        offset = 2 if block_shape != 'I' else 1
+        for block in falling_tetromino:
+            block.rect.y += PIXEL * (offset + 2)
+            block.rect.x -= PIXEL * 3
             image = pygame.image.load(block.image)
             image = pygame.transform.scale(image, (PIXEL, PIXEL))
-            surface.blit(image, block.rect)
+            falling_surface.blit(image, block.rect)
 
-        return surface
+        tetromino_target = TETROMINOS[next_tetromino]
+        tetromino_image =  BLOCK_IMG_DIR + "/" + tetromino_target["image"]
+        next_block = [
+            Block(self.sprites, pos, tetromino_target["color"], tetromino_image) for pos in tetromino_target["shape"]
+        ]
+        for block in next_block:
+            block.rect.y += PIXEL * (offset + 2)
+            block.rect.x -= PIXEL * 3
+            image = pygame.image.load(block.image)
+            image = pygame.transform.scale(image, (PIXEL, PIXEL))
+            next_surface.blit(image, block.rect)
+
+        return (falling_surface, next_surface)
         
 
     def run(self, display_surface):

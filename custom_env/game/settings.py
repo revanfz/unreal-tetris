@@ -11,7 +11,7 @@ SCOREBAR_HEIGHT = 1 - PREVIEW_HEIGHT
 WINDOW_WIDTH = MATRIX_WIDTH + SIDEBAR_WIDTH + PIXEL * 3
 WINDOW_HEIGHT = MATRIX_HEIGHT + PIXEL * 2
 
-FALL_SPEED = 120
+FALL_SPEED = 60
 ROTATE_WAIT_TIME = 50
 MOVE_WAIT_TIME = 30
 
@@ -57,7 +57,7 @@ TETROMINOS = {
     },
     "I": {
         "id": 6,
-        "shape": [(1, -1), (-1, -1), (0, -1), (2, -1)],
+        "shape": [(1, 0), (-1, 0), (0, 0), (2, 0)],
         "color": "#00FFFF",
         "image": "I.png",
         "type": [0, 0, 0, 0, 0, 1, 0],

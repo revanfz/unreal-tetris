@@ -21,7 +21,6 @@ from custom_env.game.settings import (
 )
 from custom_env.game.preview import Preview
 from custom_env.game.score import Score
-
 from torchvision.transforms import v2
 
 
@@ -35,12 +34,11 @@ def transformImage(image):
             v2.RandomHorizontalFlip(p=1)
         ]
     )
-
     return transform(image).numpy()
 
 
 class TetrisEnv(gym.Env):
-    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 24}
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
 
     def __init__(self, render_mode=None):
         pygame.init()
@@ -71,6 +69,7 @@ class TetrisEnv(gym.Env):
         self.clock = None
         self.game_over_screen = None
 
+
     def get_next_shape(self):
         if (self.game.block_placed - 4) % 7 == 0:
             random.shuffle(self.bag)
@@ -88,10 +87,12 @@ class TetrisEnv(gym.Env):
 
         return next_shape
 
+
     def update_score(self, lines, scores, level):
         self.score.lines = lines
         self.score.level = level
         self.score.scores = scores
+
 
     def find_col_heights(self):
         max_rows = []
@@ -105,6 +106,7 @@ class TetrisEnv(gym.Env):
 
         return max_rows
 
+
     def calculate_holes(self, max_rows):
         holes_per_col = []
         for col, max_row in enumerate(max_rows):
@@ -117,12 +119,14 @@ class TetrisEnv(gym.Env):
 
         return holes_per_col
 
+
     def calculate_bump(self, col_heights):
         bumpiness = 0
         for i in range(len(col_heights) - 1):
             bumpiness += abs(col_heights[i] - col_heights[i + 1])
 
         return bumpiness
+
 
     def _get_info(self):
         col_heights = self.find_col_heights()
@@ -139,11 +143,14 @@ class TetrisEnv(gym.Env):
             "falling_shape": self.game.tetromino.shape
         }
 
+
     def _get_obs(self):
         return {
             "matrix_image": transformImage(self.matrix_screen_array),
-            "falling_shape": transformImage(self.falling_shape)
+            "falling_shape": transformImage(self.falling_shape),
+            "next_shape": transformImage(self.next_tetromino)
         }
+
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -168,6 +175,7 @@ class TetrisEnv(gym.Env):
 
         return observation, info
 
+
     def step(self, action):
         """
         0 Noop             4 Rotasi kiri
@@ -184,7 +192,6 @@ class TetrisEnv(gym.Env):
                 self.game.tetromino.rotate("right" if action % 4 != 3 else "left", amount=2 if action % 4 == 2 else 1)
             
             step = (action // 4) # misal 22 -> 4, berarti 4 step ke kanan, kalo 32 -> berarti 8, 4 step ke kiri
-            print(step)
             if step:
                 step = step if step < 5 else step - 4
                 for _ in range(step):
@@ -201,20 +208,21 @@ class TetrisEnv(gym.Env):
 
         return observation, reward, self.game.tetromino.game_over, False, info
 
+
     def evaluate(self, info):
-        # reward = 0
-        reward = info["lines_cleared"] * 0.76 - (0.51 * info["heights"] + 0.36 * info["holes"] + 0.18 * info["bumpiness"])
-        # if self.game.tetromino.game_over:
-        #     return -1
-        # else:
-            # for i in range(info["lines_cleared"], 0, -1):
-            #     reward += i
+        if self.game.tetromino.game_over:
+            return -2
+        else:
+            reward = 1
+            reward += 10 * info["lines_cleared"] ** 2
 
         return reward
+
 
     def render(self):
         if self.render_mode == "rgb_array" or self.render_mode == "human":
             return self._render_frame()
+
 
     def _render_frame(self):
         try:
@@ -230,9 +238,10 @@ class TetrisEnv(gym.Env):
             self.score.run(canvas)
             self.preview.run(self.next_shapes, self.game.tetromino.shape, canvas)
 
-            falling_shape = self.game.get_falling_block()
+            falling_shape, next_shape = self.game.get_falling_block(self.game.tetromino, self.next_shapes[0])
 
             self.falling_shape = pygame.surfarray.array3d(pygame.transform.rotate(falling_shape, 90))
+            self.next_tetromino = pygame.surfarray.array3d(pygame.transform.rotate(next_shape, 90))
 
             matrix_screen = pygame.transform.rotate(
                 canvas.subsurface(
