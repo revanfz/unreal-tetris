@@ -47,6 +47,9 @@ def get_args():
         "--max-steps", type=int, default=1e3, help="Maksimal step pelatihan"
     )
     parser.add_argument(
+        "--hidden-size", type=int, default=256, help="Jumlah hidden size"
+    )
+    parser.add_argument(
         "--num-agents",
         type=int,
         default=2,
@@ -98,7 +101,7 @@ def train(opt: dict) -> None:
             shutil.rmtree(opt.log_path)
         os.makedirs(opt.log_path)
 
-        global_model = ActorCriticLSTM((4, 84, 84), len(MOVEMENT))
+        global_model = ActorCriticLSTM((4, 84, 84), len(MOVEMENT), opt.hidden_size)
         global_model.share_memory()
 
         optimizer = SharedAdam(global_model.parameters(), lr=opt.lr)

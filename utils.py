@@ -87,8 +87,8 @@ def setup_logger(logger_name, log_file, level=logging.INFO):
     l.addHandler(fileHandler)
     l.addHandler(streamHandler)
 
-def update_progress(global_steps: Synchronized, max_steps: float):
-    pbar = tqdm(total=max_steps, desc="Total Steps", unit="step")
+def update_progress(global_steps: Synchronized, max_steps: float, desc: None, unit: None):
+    pbar = tqdm(total=max_steps, desc="Total Steps" if not desc else desc, unit="step" if not unit else unit)
     while global_steps.value < max_steps:
         pbar.n = global_steps.value
         pbar.refresh()

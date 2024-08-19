@@ -58,13 +58,13 @@ def test_model(
         env.metadata['render_modes'] = ["rgb_array", "human"]
         env.metadata['render_fps'] = 60
 
-        local_model = ActorCriticLSTM((4, 84, 84), env.action_space.n)
+        local_model = ActorCriticLSTM((4, 84, 84), env.action_space.n, opt.hidden_size)
         local_model.eval()
 
         dummy_input = (
             torch.zeros(1, 4, 84, 84),
-            torch.zeros(1, 256),
-            torch.zeros(1, 256),
+            torch.zeros(1, opt.hidden_size),
+            torch.zeros(1, opt.hidden_size),
         )
         writer.add_graph(local_model, dummy_input, False)
         writer.close()
@@ -84,8 +84,8 @@ def test_model(
             with torch.no_grad():
                 if done:
                     state, info = env.reset()
-                    hx = torch.zeros(1, 256).to(device)
-                    cx = torch.zeros(1, 256).to(device)
+                    hx = torch.zeros(1, opt.hidden_size).to(device)
+                    cx = torch.zeros(1, opt.hidden_size).to(device)
                 else:
                     hx = hx.data
                     cx = cx.data

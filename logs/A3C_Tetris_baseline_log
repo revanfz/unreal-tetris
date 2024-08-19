@@ -1,0 +1,12 @@
+2024-08-18 09:32:06,348 : lr: 0.0007
+2024-08-18 09:32:06,349 : gamma: 0.99
+2024-08-18 09:32:06,349 : beta: 0.5
+2024-08-18 09:32:06,350 : minibatch_size: 5
+2024-08-18 09:32:06,350 : save_interval: 50.0
+2024-08-18 09:32:06,350 : max_steps: 1000.0
+2024-08-18 09:32:06,350 : num_agents: 0
+2024-08-18 09:32:06,352 : log_path: tensorboard/baseline_a3c_tetris
+2024-08-18 09:32:06,353 : log_test_path: tensorboard/run_baseline_a3c_tetris
+2024-08-18 09:32:06,355 : model_path: trained_models
+2024-08-18 09:32:06,357 : use_cuda: True
+2024-08-18 09:32:06,357 : resume_training: False

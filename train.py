@@ -117,7 +117,7 @@ def train_model(
 
             total_loss = actor_loss + 0.5 * critic_loss
             total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(local_model.parameters(), 40)
+            # torch.nn.utils.clip_grad_norm_(local_model.parameters(), 1.0)
             ensure_share_grads(
                 local_model=local_model, global_model=global_model, device=device
             )
@@ -199,7 +199,7 @@ def train_model_lstm(
         env = GrayScaleObservation(env)
         env = FrameStack(env, 4)
 
-        local_model = ActorCriticLSTM((4, 84, 84), env.action_space.n).to(device)
+        local_model = ActorCriticLSTM((4, 84, 84), env.action_space.n, opt.hidden_size).to(device)
         local_model.train()
 
         done = True
@@ -207,15 +207,14 @@ def train_model_lstm(
         curr_episodes = initial_eps
 
         while global_steps.value <= opt.max_steps:
-        # while not stop_event.is_set():
             optimizer.zero_grad() # Reset gradient
             local_model.load_state_dict(global_model.state_dict()) # Menyalin nlai parameter global
 
             # Mereset lingkungan simulasi
             if done:
                 state, info = env.reset()
-                hx = torch.zeros(1, 256).to(device)
-                cx = torch.zeros(1, 256).to(device)
+                hx = torch.zeros(1, opt.hidden_size).to(device)
+                cx = torch.zeros(1, opt.hidden_size).to(device)
             else:
                 hx = hx.data
                 cx = cx.data
@@ -272,7 +271,7 @@ def train_model_lstm(
             total_loss = actor_loss + 0.5 * critic_loss
             total_loss.backward()
 
-            torch.nn.utils.clip_grad_norm_(local_model.parameters(), 40)
+            # torch.nn.utils.clip_grad_norm_(local_model.parameters(), 1.0)
             ensure_share_grads(
                 local_model=local_model, global_model=global_model, device=device
             )
