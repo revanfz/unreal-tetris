@@ -1,7 +1,11 @@
+from typing import Union
+
 import torch
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
+
+from torch.distributions import Categorical
 
 
 class ConvNet(nn.Module):
@@ -180,7 +184,15 @@ class UNREAL(nn.Module):
         Reward Predictions
     """
 
-    def __init__(self, n_inputs, n_actions, hidden_size=256, beta=0.01, gamma=0.9):
+    def __init__(
+        self,
+        n_inputs: int,
+        n_actions: int,
+        device: torch.device,
+        hidden_size=256,
+        beta=0.01,
+        gamma=0.9,
+    ):
         super(UNREAL, self).__init__()
         self.beta = beta
         self.gamma = gamma
@@ -190,16 +202,52 @@ class UNREAL(nn.Module):
         self.ac_layer = ActorCritic(n_actions=n_actions, hidden_size=hidden_size)
         self.pc_layer = PixelControl(n_actions=n_actions, hidden_size=hidden_size)
         self.rp_layer = RewardPrediction(hidden_size=hidden_size)
+        self.to(device)
 
     def forward(
         self,
         state: torch.Tensor,
         action_oh: torch.Tensor,
         reward: torch.Tensor,
-        hidden: tuple,
+        hidden: Union[tuple, None],
     ):
         conv_feat = self.conv_layer(state)
         lstm_input = torch.cat([conv_feat, action_oh, reward], dim=1)
         lstm_feat, new_hidden = self.lstm_layer(lstm_input, hidden)
         policy, value = self.ac_layer(lstm_feat)
         return policy, value, conv_feat, lstm_feat, new_hidden
+
+    def a3c_loss(
+        self,
+        states: np.ndarray,
+        actions_oh: np.ndarray,
+        rewards: np.ndarray,
+        dones: np.ndarray,
+        actions: np.ndarray,
+    ) -> torch.Tensor:
+        states = torch.FloatTensor(states)
+        actions_oh = torch.FloatTensor(actions_oh)
+        rewards = torch.FloatTensor(rewards)
+        dones = torch.FloatTensor(dones)
+        actions = torch.IntTensor(actions)
+        
+        policy, values, _, _, _ = self.forward(states, actions_oh, rewards)
+        dist = Categorical(policy)
+        entropy = dist.entropy().unsqueeze(0)
+        log_probs = policy.gather(1, actions)
+
+        R = self.calculate_returns(values, dones)
+        delta = R.detach() - values
+        policy_loss = (-delta.detach() * log_probs - self.beta * entropy).mean()
+        value_loss = delta.pow(2).mean()
+        return policy_loss + value_loss
+
+
+    def calculate_returns(self, values, dones):
+        R_list = []
+        R = 0
+        for i in reversed(range(values.size(0))):
+            R = R * self.gamma * (1 - dones[i]) + values[i]
+            R_list.append(R)
+        R_list = list(reversed(R_list))
+        return torch.cat(R_list, 0)
