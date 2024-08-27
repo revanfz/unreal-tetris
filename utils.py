@@ -60,13 +60,12 @@ def ensure_share_grads(
     for local_param, global_param in zip(
         local_model.parameters(), global_model.parameters()
     ):
-        if global_param.grad is not None:
-            return
-        
-        if device.type == "cuda":
-            global_param._grad = local_param.grad.cpu()
-        else:
-            global_param._grad = local_param.grad
+        if global_param.grad is None:
+            # if local_param.grad is not None:
+            if device.type == "cuda":
+                global_param._grad = local_param.grad.cpu()
+            else:
+                global_param._grad = local_param.grad
 
 
 def model_logger(model_queue: Queue, path: str) -> None:

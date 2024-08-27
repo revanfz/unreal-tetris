@@ -41,27 +41,30 @@ def worker(
         device=device,
     )
     local_model.train()
-    local_replay_buffer = ReplayBuffer(params["unroll_steps"])
+    local_replay_buffer = ReplayBuffer(params.unroll_steps)
 
     done = True
 
-    while global_steps.value <= params["max_steps"]:
+    while global_steps.value <= params.max_steps:
         optimizer.zero_grad()
         local_model.load_state_dict(global_model.state_dict())
 
         if done:
             state, info = env.reset()
+            state = preprocess_frame_stack(state)
             local_replay_buffer.clear()
-            prev_action = torch.zeros(1, env.action_space.n)
-            prev_reward = torch.zeros(1, 1)
-            hx = torch.zeros(1, params["hidden_size"])
-            cx = torch.zeros(1, params["hidden_size"])
+            prev_action = torch.zeros(1, env.action_space.n).to(device)
+            prev_reward = torch.zeros(1, 1).to(device)
+            hx = torch.zeros(1, params.hidden_size).to(device)
+            cx = torch.zeros(1, params.hidden_size).to(device)
             episode_reward = 0
+        else:
+            hx = hx.data
+            cx = cx.data
 
-        for _ in range(params["unroll_steps"]):
+        for _ in range(params.unroll_steps):
             if not rank:
                 env.render()
-            state = preprocess_frame_stack(state)
             state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
             policy, _, _, _, (hx, cx) = local_model(
                 state_tensor, prev_action, prev_reward, (hx, cx)
@@ -73,10 +76,13 @@ def worker(
             next_state, reward, done, _, info = env.step(action.item())
             next_state = preprocess_frame_stack(next_state)
 
-            prev_action = F.one_hot(action, num_classes=env.action_space.n)
-            prev_reward = torch.FloatTensor([reward]).unsqueeze(0)
+            prev_action = F.one_hot(action, num_classes=env.action_space.n).to(device)
+            prev_reward = torch.FloatTensor([reward]).unsqueeze(0).to(device)
             shared_replay_buffer.push(
-                state, action.item(), reward, next_state, done, True
+                state, action.item(), reward, next_state, done
+            )
+            local_replay_buffer.push(
+                state, action.item(), reward, next_state, done
             )
 
             episode_reward += reward
@@ -86,20 +92,27 @@ def worker(
                 break
 
         # Hitung loss A3C
-        # 1. Hitung returns
-        state, action, reward, next_state, done = local_replay_buffer.sample(20)
-        actions_oh = F.one_hot(action, num_classes=env.action_space.n)
-        a3c_loss = local_model.a3c_loss(state, actions_oh, reward, done, action)
+        states, actions, rewards, _, dones = local_replay_buffer.sample(params.unroll_steps)
+        policy_loss, value_loss = local_model.a3c_loss(states, rewards, dones, actions)
+        a3c_loss = policy_loss + value_loss
 
-        a3c_loss.backward()
+        # Hitung Loss Pixel Control dan Feature Control
+        states, actions, rewards, next_states, dones = shared_replay_buffer.sample(params.unroll_steps)
+        aux_control_loss = local_model.control_loss(states, actions, rewards, next_states, dones)
+
+        # Hitung Loss Reward Pedictions
+        states, rewards = shared_replay_buffer.sample_rp(3)
+        rp_loss = local_model.rp_loss(states, rewards)
+
+        # Hitung value replay loss
+        states, actions, rewards, _, dones = shared_replay_buffer.sample(params.unroll_steps)
+        vr_loss = local_model.vr_loss(states, actions, rewards, dones)
+
+        total_loss = a3c_loss + vr_loss + aux_control_loss + rp_loss
+
+        total_loss.backward()
         nn.utils.clip_grad_norm_(local_model.parameters(), 40)
         ensure_share_grads(
             local_model=local_model, global_model=global_model, device=device
         )
         optimizer.step()
-
-        # Hitung Loss Pixel Control dan Feature Control
-
-        # Hitung Loss Reward Pedictions
-
-        # Propagasi Balik total loss
