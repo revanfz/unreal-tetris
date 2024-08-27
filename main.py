@@ -46,7 +46,7 @@ def get_args():
         help="jumlah steps sebelum menyimpan model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=1.2e6, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=1e6, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
@@ -54,7 +54,7 @@ def get_args():
     parser.add_argument(
         "--num-agents",
         type=int,
-        default=1,
+        default=4,
         help="Jumlah agen yang berjalan secara asinkron",
     )
     parser.add_argument(
@@ -62,12 +62,6 @@ def get_args():
         type=str,
         default="tensorboard/a3c_tetris",
         help="direktori plotting tensorboard",
-    )
-    parser.add_argument(
-        "--log-test-path",
-        type=str,
-        default="tensorboard/run_a3c_tetris",
-        help="direktori plotting testing tensorboard",
     )
     parser.add_argument(
         "--model-path",
@@ -125,12 +119,11 @@ def train(params: argparse.Namespace) -> None:
             )
             process.start()
             processes.append(process)
-            time.sleep(0.001)
+            time.sleep(0.1)
 
         for process in processes:
-            time.sleep(0.001)
+            time.sleep(0.1)
             process.join()
-        time.sleep(0.001)
 
     except (KeyboardInterrupt, mp.ProcessError) as e:
         print("Multiprocessing dihentikan...")
