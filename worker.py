@@ -1,3 +1,4 @@
+from multiprocessing.managers import SyncManager
 import gym_tetris
 import torch
 import torch.nn as nn
@@ -22,12 +23,16 @@ def worker(
     optimizer: SharedAdam,
     shared_replay_buffer: ReplayBuffer,
     global_steps: Synchronized,
+    global_episodes: Synchronized,
+    shared_dict: SyncManager,
     params: Namespace,
+    agent_episodes: int = 0,
 ):
     try:
+        finished = False
         torch.manual_seed(42 + rank)
         if not rank:
-            writer = SummaryWriter()
+            writer = SummaryWriter(params.log_path)
 
         env = gym_tetris.make(
             "TetrisA-v3",
@@ -114,7 +119,7 @@ def worker(
             states, actions, rewards, _, dones = shared_replay_buffer.sample(params.unroll_steps)
             vr_loss = local_model.vr_loss(states, actions, rewards, dones)
 
-            total_loss = a3c_loss + vr_loss + aux_control_loss + rp_loss
+            total_loss = a3c_loss + vr_loss + params.task_weight * aux_control_loss + rp_loss
 
             total_loss.backward()
             nn.utils.clip_grad_norm_(local_model.parameters(), 40)
@@ -124,14 +129,43 @@ def worker(
             optimizer.step()
 
             if not rank:
-                pass
-                
+                writer.add_scalar(
+                    f"Losses",
+                    total_loss,
+                    global_episodes.value
+                )
+
+                writer.add_scalar(
+                    f"Rewards",
+                    episode_reward,
+                    global_episodes.value
+                )
+
+                writer.add_scalar(
+                    f"Lines cleared",
+                    info["number_of_lines"],
+                    global_episodes.value
+                )
+
+                writer.add_scalar(
+                    f"Block placed",
+                    sum(info["statistics"].values()),
+                    global_episodes.value
+                )
+
+                if global_episodes % 100 == 0:
+                    writer.flush()
+
+            agent_episodes += 1
+            with global_episodes.get_lock():
+                global_episodes.value += 1
         
         if not rank:
             torch.save(
                 global_model.state_dict(),
                 f"{params.model_path}/a3c_tetris.pt"
             )
+        finished = True
         print("Pelatihan agen {rank} selesai")
     
     except KeyboardInterrupt as e:
@@ -141,4 +175,14 @@ def worker(
         print("Unexpected error")
 
     finally:
+        if not finished and not rank:
+            torch.save({
+                "model_state_dict": global_model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "steps": global_steps.value.value,
+                "episodes": global_episodes.value
+            }, f"{params.model_path}/a3c_checkpoint.tar")
+        env.close()
+        writer.close()
+        shared_dict[f"agent_{rank}"] = agent_episodes
         print(f"Proses pelatihan agen {rank} dihentikan")

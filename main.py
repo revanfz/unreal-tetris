@@ -1,10 +1,7 @@
 import os
-
-from replay_buffer import ReplayBuffer
-
 os.environ["OMP_NUM_THREADS"] = "1"
+
 import sys
-import time
 import json
 import torch
 import shutil
@@ -15,6 +12,7 @@ from model import UNREAL
 from worker import worker
 from optimizer import SharedAdam
 from torch import manual_seed, load
+from replay_buffer import ReplayBuffer
 from gym_tetris.actions import MOVEMENT
 from utils import model_logger, update_progress
 from torch.cuda import manual_seed as cuda_manual_seed
@@ -33,6 +31,7 @@ def get_args():
         "--gamma", type=float, default=0.9, help="discount factor for rewards"
     )
     parser.add_argument("--beta", type=float, default=0.01, help="entropy coefficient")
+    parser.add_argument("--task-weight", type=float, default=0.1, help="task weight")
     parser.add_argument(
         "--unroll-steps",
         type=int,
@@ -46,7 +45,7 @@ def get_args():
         help="jumlah steps sebelum menyimpan model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=1e6, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=1e2, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
@@ -101,9 +100,38 @@ def train(params: argparse.Namespace) -> None:
 
         processes = []
         global_steps = mp.Value("i", 0)
+        global_episodes = mp.Value("i", 0)
+        global_rewards = mp.Value("f", 0.0)
         res_queue = mp.Queue()
         manager = mp.Manager()
         shared_dict = manager.dict()
+
+        if opt.resume_training:
+            if os.path.isdir(opt.model_path):
+                file_ = f"{opt.model_path}/a3c_checkpoint.tar"
+                if os.path.isfile(file_):
+                    checkpoint = load(file_)
+                    global_model.load_state_dict(checkpoint["model_state_dict"])
+                    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+                    global_steps = mp.Value("i", checkpoint["steps"])
+                    global_episodes = mp.Value("i", checkpoint["episodes"])
+                    with open("checkpoint.json") as f:
+                        agent_checkpoint = json.load(f)
+                    print(
+                        f"Resuming training for previous model, state: Steps {checkpoint['steps']}, Tests: {checkpoint['num_tests']}\nAgent state: {agent_checkpoint}"
+                    )
+                else:
+                    print("File checkpoint belum ada, memulai training...")
+            else:
+                print("Membuat direktori model...")
+                os.makedirs(opt.model_path)
+                print("Memulai training...")
+
+        progress_process = mp.Process(
+            target=update_progress, args=(global_steps, opt.max_steps)
+        )
+        progress_process.start()
+        processes.append(progress_process)
         
         for rank in range(params.num_agents):
             process = mp.Process(
@@ -114,15 +142,16 @@ def train(params: argparse.Namespace) -> None:
                    optimizer,
                    shared_replay_buffer,
                    global_steps,
-                   params
+                   global_episodes,
+                   shared_dict,
+                   params,
+                   agent_checkpoint[f"agent_{rank}"] if opt.resume_training else 0
                 ),
             )
             process.start()
             processes.append(process)
-            time.sleep(0.1)
 
         for process in processes:
-            time.sleep(0.1)
             process.join()
 
     except (KeyboardInterrupt, mp.ProcessError) as e:
@@ -146,3 +175,4 @@ if __name__ == "__main__":
 
     finally:
         print("Pelatihan selesai.")
+       
