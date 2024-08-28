@@ -1,4 +1,3 @@
-from multiprocessing.managers import SyncManager
 import gym_tetris
 import torch
 import torch.nn as nn
@@ -12,8 +11,9 @@ from wrapper import ActionRepeatWrapper
 from gym_tetris.actions import MOVEMENT
 from nes_py.wrappers import JoypadSpace
 from torch.distributions import Categorical
-from multiprocessing.sharedctypes import Synchronized
+from multiprocessing.managers import SyncManager
 from torch.utils.tensorboard import SummaryWriter
+from multiprocessing.sharedctypes import Synchronized
 from utils import ensure_share_grads, preprocess_frame_stack
 
 
@@ -32,7 +32,7 @@ def worker(
         finished = False
         torch.manual_seed(42 + rank)
         if not rank:
-            writer = SummaryWriter(params.log_path)
+            writer = SummaryWriter(params.log_path, purge_step=global_episodes.value)
 
         env = gym_tetris.make(
             "TetrisA-v3",
@@ -85,41 +85,63 @@ def worker(
                 next_state, reward, done, _, info = env.step(action.item())
                 next_state = preprocess_frame_stack(next_state)
 
-                prev_action = F.one_hot(action, num_classes=env.action_space.n).to(device)
+                prev_action = F.one_hot(action, num_classes=env.action_space.n).to(
+                    device
+                )
                 prev_reward = torch.FloatTensor([reward]).unsqueeze(0).to(device)
                 shared_replay_buffer.push(
                     state, action.item(), reward, next_state, done
                 )
-                local_replay_buffer.push(
-                    state, action.item(), reward, next_state, done
-                )
+                local_replay_buffer.push(state, action.item(), reward, next_state, done)
 
                 episode_reward += reward
                 state = next_state
                 with global_steps.get_lock():
-                    global_steps += 1
+                    global_steps.value += 1
+                    if global_steps.value % params.save_interval == 0:
+                        torch.save(
+                            {
+                                "model_state_dict": global_model.state_dict(),
+                                "optimizer_state_dict": optimizer.state_dict(),
+                                "steps": global_steps.value,
+                                "episodes": global_episodes.value,
+                            },
+                            f"{params.model_path}/a3c_checkpoint.tar",
+                        )
 
                 if done:
                     break
 
             # Hitung loss A3C
-            states, actions, rewards, _, dones = local_replay_buffer.sample(params.unroll_steps)
-            policy_loss, value_loss = local_model.a3c_loss(states, rewards, dones, actions)
+            states, actions, rewards, _, dones = local_replay_buffer.sample(
+                params.unroll_steps
+            )
+            policy_loss, value_loss = local_model.a3c_loss(
+                states, rewards, dones, actions
+            )
             a3c_loss = policy_loss + value_loss
 
             # Hitung Loss Pixel Control dan Feature Control
-            states, actions, rewards, next_states, dones = shared_replay_buffer.sample(params.unroll_steps)
-            aux_control_loss = local_model.control_loss(states, actions, rewards, next_states, dones)
+            states, actions, rewards, next_states, dones = shared_replay_buffer.sample(
+                params.unroll_steps
+            )
+            aux_control_loss = local_model.control_loss(
+                states, actions, rewards, next_states, dones
+            )
 
             # Hitung Loss Reward Pedictions
             states, rewards = shared_replay_buffer.sample_rp(3)
             rp_loss = local_model.rp_loss(states, rewards)
 
             # Hitung value replay loss
-            states, actions, rewards, _, dones = shared_replay_buffer.sample(params.unroll_steps)
+            states, actions, rewards, _, dones = shared_replay_buffer.sample(
+                params.unroll_steps
+            )
             vr_loss = local_model.vr_loss(states, actions, rewards, dones)
 
-            total_loss = a3c_loss + vr_loss + params.task_weight * aux_control_loss + rp_loss
+            total_loss = (
+                a3c_loss + vr_loss + params.task_weight * aux_control_loss + rp_loss
+            )
 
             total_loss.backward()
             nn.utils.clip_grad_norm_(local_model.parameters(), 40)
@@ -129,60 +151,57 @@ def worker(
             optimizer.step()
 
             if not rank:
-                writer.add_scalar(
-                    f"Losses",
-                    total_loss,
-                    global_episodes.value
-                )
+                writer.add_scalar(f"Losses", total_loss, global_episodes.value)
+
+                writer.add_scalar(f"Rewards", episode_reward, global_episodes.value)
 
                 writer.add_scalar(
-                    f"Rewards",
-                    episode_reward,
-                    global_episodes.value
-                )
-
-                writer.add_scalar(
-                    f"Lines cleared",
-                    info["number_of_lines"],
-                    global_episodes.value
+                    f"Lines cleared", info["number_of_lines"], global_episodes.value
                 )
 
                 writer.add_scalar(
                     f"Block placed",
                     sum(info["statistics"].values()),
-                    global_episodes.value
+                    global_episodes.value,
                 )
 
-                if global_episodes % 100 == 0:
+                if agent_episodes % 100 == 0:
                     writer.flush()
 
             agent_episodes += 1
             with global_episodes.get_lock():
                 global_episodes.value += 1
-        
+
         if not rank:
-            torch.save(
-                global_model.state_dict(),
-                f"{params.model_path}/a3c_tetris.pt"
-            )
+            torch.save(global_model.state_dict(), f"{params.model_path}/a3c_tetris.pt")
         finished = True
-        print("Pelatihan agen {rank} selesai")
-    
+        print(f"Pelatihan agen {rank} selesai")
+
     except KeyboardInterrupt as e:
         print(f"Program dihentikan")
+        raise KeyboardInterrupt("Program dihentikan")
 
     except torch.multiprocessing.ProcessError as e:
         print("Unexpected error")
+        raise Exception(f"Multiprocessing error\t{e}.")
+
+    except Exception as e:
+        print(f"Error ;X\n{e}")
+        raise Exception(f"{e}")
 
     finally:
         if not finished and not rank:
-            torch.save({
-                "model_state_dict": global_model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "steps": global_steps.value.value,
-                "episodes": global_episodes.value
-            }, f"{params.model_path}/a3c_checkpoint.tar")
+            torch.save(
+                {
+                    "model_state_dict": global_model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "steps": global_steps.value,
+                    "episodes": global_episodes.value,
+                },
+                f"{params.model_path}/a3c_checkpoint.tar",
+            )
+        if not rank:
+            writer.close()
         env.close()
-        writer.close()
         shared_dict[f"agent_{rank}"] = agent_episodes
         print(f"Proses pelatihan agen {rank} dihentikan")

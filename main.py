@@ -1,4 +1,5 @@
 import os
+
 os.environ["OMP_NUM_THREADS"] = "1"
 
 import sys
@@ -45,7 +46,7 @@ def get_args():
         help="jumlah steps sebelum menyimpan model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=1e2, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=2e6, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
@@ -90,7 +91,12 @@ def train(params: argparse.Namespace) -> None:
             shutil.rmtree(params.log_path)
         os.makedirs(params.log_path)
 
-        global_model = UNREAL((3, 84, 84), len(MOVEMENT), device=torch.device("cpu"), hidden_size=params.hidden_size)
+        global_model = UNREAL(
+            (3, 84, 84),
+            len(MOVEMENT),
+            device=torch.device("cpu"),
+            hidden_size=params.hidden_size,
+        )
         global_model.train()
 
         optimizer = SharedAdam(global_model.parameters(), lr=params.lr)
@@ -118,7 +124,7 @@ def train(params: argparse.Namespace) -> None:
                     with open("checkpoint.json") as f:
                         agent_checkpoint = json.load(f)
                     print(
-                        f"Resuming training for previous model, state: Steps {checkpoint['steps']}, Tests: {checkpoint['num_tests']}\nAgent state: {agent_checkpoint}"
+                        f"Resuming training for previous model, state: Steps {checkpoint['steps']}, Episodes: {checkpoint['episodes']}\nAgent state: {agent_checkpoint}"
                     )
                 else:
                     print("File checkpoint belum ada, memulai training...")
@@ -132,20 +138,25 @@ def train(params: argparse.Namespace) -> None:
         )
         progress_process.start()
         processes.append(progress_process)
-        
+
         for rank in range(params.num_agents):
             process = mp.Process(
                 target=worker,
                 args=(
-                   rank,
-                   global_model,
-                   optimizer,
-                   shared_replay_buffer,
-                   global_steps,
-                   global_episodes,
-                   shared_dict,
-                   params,
-                   agent_checkpoint[f"agent_{rank}"] if opt.resume_training else 0
+                    rank,
+                    global_model,
+                    optimizer,
+                    shared_replay_buffer,
+                    global_steps,
+                    global_episodes,
+                    shared_dict,
+                    params,
+                    (
+                        agent_checkpoint[f"agent_{rank}"]
+                        if opt.resume_training
+                        and os.path.isfile(f"{opt.model_path}/a3c_checkpoint.tar")
+                        else 0
+                    ),
                 ),
             )
             process.start()
@@ -156,23 +167,32 @@ def train(params: argparse.Namespace) -> None:
 
     except (KeyboardInterrupt, mp.ProcessError) as e:
         print("Multiprocessing dihentikan...")
-        raise KeyboardInterrupt
+        raise KeyboardInterrupt(f"Program dihentikan")
+    
+    except Exception as e:
+        raise Exception(f"{e}")
 
     finally:
+        for process in processes:
+            process.terminate()
         with open("checkpoint.json", "w") as f:
             json.dump(dict(shared_dict), f, indent=4)
 
 
 if __name__ == "__main__":
     try:
+        done = True
         mp.set_start_method("spawn")
         opt = get_args()
         train(opt)
 
     except KeyboardInterrupt as e:
+        done = False
         print("Program dihentikan...")
-        sys.exit()
+
+    except Exception as e:
+        done = False
+        print(f"Error:\t{e} :X")
 
     finally:
-        print("Pelatihan selesai.")
-       
+        print(f"Pelatihan {'selesai' if done else 'gagal'}.")
