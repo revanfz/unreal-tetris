@@ -7,32 +7,33 @@ from model import UNREAL
 from argparse import Namespace
 from optimizer import SharedAdam
 from replay_buffer import ReplayBuffer
-from wrapper import ActionRepeatWrapper
 from gym_tetris.actions import MOVEMENT
 from nes_py.wrappers import JoypadSpace
 from torch.distributions import Categorical
 from multiprocessing.managers import SyncManager
 from torch.utils.tensorboard import SummaryWriter
 from multiprocessing.sharedctypes import Synchronized
-from utils import ensure_share_grads, preprocess_frame_stack
+from utils import ensure_share_grads, preprocessing
+from wrapper import FrameSkipWrapper
 
 
 def worker(
     rank: int,
     global_model: UNREAL,
     optimizer: SharedAdam,
-    shared_replay_buffer: ReplayBuffer,
     global_steps: Synchronized,
     global_episodes: Synchronized,
     shared_dict: SyncManager,
     params: Namespace,
+    device: torch.device,
     agent_episodes: int = 0,
+    num_tries: int = 1,
 ):
     try:
         finished = False
         torch.manual_seed(42 + rank)
         if not rank:
-            writer = SummaryWriter(params.log_path, purge_step=global_episodes.value)
+            writer = SummaryWriter(f"{params.log_path}_N{num_tries}_Eps{global_episodes.value}")
 
         env = gym_tetris.make(
             "TetrisA-v3",
@@ -40,9 +41,9 @@ def worker(
             render_mode="human" if not rank else "rgb_array",
         )
         env = JoypadSpace(env, MOVEMENT)
-        env = ActionRepeatWrapper(env)
+        env = FrameSkipWrapper(env)
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cpu")
         local_model = UNREAL(
             n_inputs=(3, 84, 84),
             n_actions=env.action_space.n,
@@ -50,7 +51,7 @@ def worker(
             device=device,
         )
         local_model.train()
-        local_replay_buffer = ReplayBuffer(params.unroll_steps)
+        experience_replay = ReplayBuffer(2000)
 
         done = True
 
@@ -58,20 +59,19 @@ def worker(
             optimizer.zero_grad()
             local_model.load_state_dict(global_model.state_dict())
 
-            if done:
-                state, info = env.reset()
-                state = preprocess_frame_stack(state)
-                local_replay_buffer.clear()
-                prev_action = torch.zeros(1, env.action_space.n).to(device)
-                prev_reward = torch.zeros(1, 1).to(device)
-                hx = torch.zeros(1, params.hidden_size).to(device)
-                cx = torch.zeros(1, params.hidden_size).to(device)
-                episode_reward = 0
-            else:
-                hx = hx.data
-                cx = cx.data
-
             for _ in range(params.unroll_steps):
+                if done:
+                    state, info = env.reset()
+                    state = preprocessing(state)
+                    prev_action = torch.zeros(1, env.action_space.n).to(device)
+                    prev_reward = torch.zeros(1, 1).to(device)
+                    hx = torch.zeros(1, params.hidden_size).to(device)
+                    cx = torch.zeros(1, params.hidden_size).to(device)
+                    episode_reward = 0
+                else:
+                    hx = hx.data
+                    cx = cx.data
+
                 if not rank:
                     env.render()
                 state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
@@ -83,24 +83,33 @@ def worker(
                 action = dist.sample().detach()
 
                 next_state, reward, done, _, info = env.step(action.item())
-                next_state = preprocess_frame_stack(next_state)
+                if done:
+                    reward -= 20
+                next_state = preprocessing(next_state)
+
+                experience_replay.store(
+                    state,
+                    prev_action.argmax().item(),
+                    prev_reward.item(),
+                    next_state,
+                    action.item(),
+                    reward,
+                    done,
+                )
 
                 prev_action = F.one_hot(action, num_classes=env.action_space.n).to(
                     device
                 )
                 prev_reward = torch.FloatTensor([reward]).unsqueeze(0).to(device)
-                shared_replay_buffer.push(
-                    state, action.item(), reward, next_state, done
-                )
-                local_replay_buffer.push(state, action.item(), reward, next_state, done)
+                state = next_state
 
                 episode_reward += reward
-                state = next_state
                 with global_steps.get_lock():
                     global_steps.value += 1
                     if global_steps.value % params.save_interval == 0:
                         torch.save(
                             {
+                                "num_tries": num_tries,
                                 "model_state_dict": global_model.state_dict(),
                                 "optimizer_state_dict": optimizer.state_dict(),
                                 "steps": global_steps.value,
@@ -109,36 +118,37 @@ def worker(
                             f"{params.model_path}/a3c_checkpoint.tar",
                         )
 
-                if done:
-                    break
-
             # Hitung loss A3C
-            states, actions, rewards, _, dones = local_replay_buffer.sample(
-                params.unroll_steps
+            # 1. Sampel replay buffer secara sekuensial
+            states, prev_actions, prev_rewards, _, _, _, dones = experience_replay.sample(
+                params.unroll_steps, base=True
             )
-            policy_loss, value_loss = local_model.a3c_loss(
-                states, rewards, dones, actions
+            # 2. Hitung loss actor dan critic
+            policy_loss, value_loss, entropy = local_model.a3c_loss(
+                states, prev_rewards, prev_actions, dones
             )
+            # 3. Jumlahkan loss dengan mengurangi nilai critic loss
             a3c_loss = policy_loss + value_loss
 
             # Hitung Loss Pixel Control dan Feature Control
-            states, actions, rewards, next_states, dones = shared_replay_buffer.sample(
+            # 1.  Sampling replay buffer secara random
+            states, prev_actions, prev_rewards, next_states, next_actions, next_rewards, dones = experience_replay.sample(
                 params.unroll_steps
             )
+            # 2a. Hitung loss Pixel Control
             aux_control_loss = local_model.control_loss(
-                states, actions, rewards, next_states, dones
-            )
+                states, prev_actions, prev_rewards, next_states, next_actions, next_rewards, dones
+            )  
+            # 2b. Hitung loss Value Replay
+            vr_loss = local_model.vr_loss(states, prev_actions, prev_rewards, dones)
 
             # Hitung Loss Reward Pedictions
-            states, rewards = shared_replay_buffer.sample_rp(3)
-            rp_loss = local_model.rp_loss(states, rewards)
+            # 1. Sampel 3 frame dengan pleuang rewarding state = 0.5
+            states, prev_rewards, next_rewards = experience_replay.sample_rp()
+            # 2. Hitung loss reward prediction
+            rp_loss = local_model.rp_loss(states, prev_rewards, next_rewards[-1])
 
-            # Hitung value replay loss
-            states, actions, rewards, _, dones = shared_replay_buffer.sample(
-                params.unroll_steps
-            )
-            vr_loss = local_model.vr_loss(states, actions, rewards, dones)
-
+            # Penjumlahan loss a3c, pixel control, value replay dan reward prediction
             total_loss = (
                 a3c_loss + vr_loss + params.task_weight * aux_control_loss + rp_loss
             )
@@ -164,6 +174,8 @@ def worker(
                     sum(info["statistics"].values()),
                     global_episodes.value,
                 )
+
+                writer.add_scalar("Entropy", entropy.mean().item(), global_episodes.value)
 
                 if agent_episodes % 100 == 0:
                     writer.flush()
@@ -193,6 +205,7 @@ def worker(
         if not finished and not rank:
             torch.save(
                 {
+                    "num_tries": num_tries + 1,
                     "model_state_dict": global_model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                     "steps": global_steps.value,

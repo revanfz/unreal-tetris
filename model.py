@@ -7,6 +7,8 @@ import torch.nn.functional as F
 
 from torch.distributions import Categorical
 
+from utils import preprocessing
+
 
 class ConvNet(nn.Module):
     """
@@ -57,7 +59,7 @@ class LSTMNet(nn.Module):
     def __init__(self, n_actions: int, hidden_size: int):
         super(LSTMNet, self).__init__()
         self.n_actions = n_actions
-        self.lstm_layer = nn.LSTMCell(256 + n_actions + 1, hidden_size)
+        self.lstm_layer = nn.LSTMCell(hidden_size + n_actions + 1, hidden_size)
 
     def forward(self, conv_feature, hidden):
         lstm_feature, new_hidden = self.lstm_layer(conv_feature, hidden)
@@ -118,7 +120,7 @@ class PixelControl(nn.Module):
         advantage = self.deconv_advantage(spatial_feat)
         advantage_mean = advantage.mean(dim=1, keepdim=True)
         q_aux = value + advantage - advantage_mean
-        return F.relu(q_aux, inplace=True)
+        return F.relu(q_aux)
 
 
 class FeatureControl(nn.Module):
@@ -147,7 +149,7 @@ class FeatureControl(nn.Module):
         advantage = self.deconv_advantage(x)
         advantage_mean = advantage.mean(dim=1, keepdim=True)
         q_aux = value + advantage - advantage_mean
-        return F.relu(q_aux, inplace=True)
+        return F.relu(q_aux)
 
 
 class RewardPrediction(nn.Module):
@@ -207,9 +209,8 @@ class UNREAL(nn.Module):
         self.lstm_layer = LSTMNet(n_actions=n_actions, hidden_size=hidden_size)
         self.ac_layer = ActorCritic(n_actions=n_actions, hidden_size=hidden_size)
         self.pc_layer = PixelControl(n_actions=n_actions, hidden_size=hidden_size)
-        self.fc_layer = FeatureControl(n_actions=n_actions, hidden_size=hidden_size)
         self.rp_layer = RewardPrediction(hidden_size=hidden_size)
-        self.to(device)
+        self.to(self.device)
 
     def forward(
         self,
@@ -228,8 +229,8 @@ class UNREAL(nn.Module):
         self,
         states: np.ndarray,
         rewards: np.ndarray,
-        dones: np.ndarray,
         actions: np.ndarray,
+        dones: np.ndarray,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         states = torch.FloatTensor(states).to(self.device).squeeze(1)
         rewards = torch.FloatTensor(rewards).to(self.device).unsqueeze(1)
@@ -242,18 +243,20 @@ class UNREAL(nn.Module):
         entropy = dist.entropy().unsqueeze(0)
         log_probs = dist.log_prob(actions)
 
-        R = self.calculate_returns(values, dones).unsqueeze(1)
+        R = self.calculate_returns(rewards, dones, values[-1]).unsqueeze(1)
         delta = R.detach() - values
         policy_loss = (-delta.detach() * log_probs - self.beta * entropy).mean()
         value_loss = delta.pow(2).mean()
-        return (policy_loss, value_loss)
+        return (policy_loss, value_loss, entropy)
 
     def control_loss(
         self,
-        states: torch.Tensor,
-        actions: torch.Tensor,
+        states: np.ndarray,
+        actions: np.ndarray,
         rewards: np.ndarray,
         next_states: np.ndarray,
+        next_actions: np.ndarray,
+        next_rewards: np.ndarray,
         dones: np.ndarray,
     ):
         states = torch.FloatTensor(states).to(self.device).squeeze(1)
@@ -262,58 +265,56 @@ class UNREAL(nn.Module):
         dones = torch.FloatTensor(dones).to(self.device).unsqueeze(1)
         actions = torch.LongTensor(actions).to(self.device)
         actions_oh = F.one_hot(actions, num_classes=self.n_actions).to(self.device)
+        next_actions = torch.LongTensor(next_actions).to(self.device)
+        next_actions_oh = F.one_hot(next_actions, num_classes=self.n_actions).to(self.device)
+        next_rewards = torch.FloatTensor(next_rewards).to(self.device).unsqueeze(1)
 
         conv_feat = self.conv_layer(states)
         lstm_input = torch.cat([conv_feat, actions_oh, rewards], dim=1)
         lstm_feat, _ = self.lstm_layer(lstm_input, None)
-        q_aux_pc: torch.Tensor = self.pc_layer(lstm_feat)
-        q_aux_fc: torch.Tensor = self.fc_layer(lstm_feat)
+        q_aux: torch.Tensor = self.pc_layer(lstm_feat)
 
-        def center_crop(x: torch.Tensor):
-            _, _, H, W = x.shape
-            top = (H - 80) // 2
-            left = (H - 80) // 2
-            return x[:, :, top : top + 80, left : left + 80]
+        next_conv_feat = self.conv_layer(next_states)
+        next_lstm_input = torch.cat([next_conv_feat, next_actions_oh, next_rewards], dim=1)
+        next_lstm_feat, _ = self.lstm_layer(next_lstm_input, None)
+        next_q_aux: torch. Tensor = self.pc_layer(next_lstm_feat)
 
-        cropped_states = center_crop(states)
-        cropped_next_states = center_crop(next_states)
-
+        cropped_states = preprocessing(states, pixel_control=True)
+        cropped_next_states = preprocessing(next_states, pixel_control=True)
         pixel_change = torch.abs(cropped_next_states - cropped_states)
         pixel_change = F.avg_pool2d(pixel_change, kernel_size=4, stride=4)
-
         reward = pixel_change.mean(dim=1).unsqueeze(1)
-        expanded_actions = actions.expand(actions.size(0), 1, q_aux_pc.size(2), q_aux_pc.size(3))
+        
+        actions = actions.view(actions.size(0), 1, 1, 1)
+        actions = actions.expand(-1, -1, q_aux.size(2), q_aux.size(3))
+        q_values = q_aux.gather(1, actions).squeeze(0)
+        next_q = next_q_aux.max(1)[0].detach().unsqueeze(1)
+        dones = dones.view(-1, 1, 1, 1).expand_as(reward)
+        q_target = reward * self.gamma * (1 - dones) * next_q
+        pc_loss = F.mse_loss(q_values, q_target)
 
-        action_q_values_pc = q_aux_pc.gather(1, expanded_actions)
-        target_q_values_pc = reward + 0.99 * q_aux_pc.max(dim=1)[0].detach().unsqueeze(1)
-        pixel_control_loss = F.mse_loss(action_q_values_pc, target_q_values_pc)
+        return pc_loss
 
-        action_q_values_fc = q_aux_fc.gather(1, expanded_actions)
-        target_q_values_fc = reward + 0.99 * q_aux_fc.max(dim=1)[0].detach().unsqueeze(1)
-        feature_control_loss = F.mse_loss(action_q_values_fc, target_q_values_fc)
-
-        return pixel_control_loss + feature_control_loss 
     
     def rp_loss(
         self,
         states: np.ndarray,
-        rewards: np.ndarray
+        rewards: np.ndarray,
+        next_rewards: float
     ):
         states = torch.FloatTensor(states).to(self.device).squeeze(1)
-        rewards = torch.FloatTensor(rewards).to(self.device).unsqueeze(1)
-
-        reward = rewards[-1]
-        rp_c = torch.zeros(3).to(self.device)
-        if reward < 0:
-            rp_c[0] = 1.0
-        elif reward == 0:
-            rp_c[1] = 1.0
+        reward = next_rewards
+        rewards = torch.zeros(3, dtype=torch.float32).to(self.device)
+        if reward > 0:
+            rewards[2] = 1.0
+        elif reward < 0:
+            rewards[1] = 1.0
         else:
-            rp_c[2] = 1.0
-
+            rewards[0] = 1.0
+            
         state_conv_feat = self.conv_layer(states).view(-1)
         reward_classification = self.rp_layer(state_conv_feat)
-        rp_loss = F.cross_entropy(reward_classification, rp_c.unsqueeze(0))
+        rp_loss = F.cross_entropy(reward_classification, rewards.unsqueeze(0))
 
         return rp_loss
     
@@ -331,15 +332,15 @@ class UNREAL(nn.Module):
         actions_oh = F.one_hot(actions, num_classes=self.n_actions).to(self.device)
 
         _, values, _, _, _ = self.forward(states, actions_oh, rewards)
-        R = self.calculate_returns(values, dones).unsqueeze(1)
+        R = self.calculate_returns(rewards, dones, values[-1]).unsqueeze(1)
         loss = (R.detach() - values).pow(2).mean()
         return loss    
 
-    def calculate_returns(self, values, dones):
+    def calculate_returns(self, rewards, dones, last_value):
         R_list = []
-        R = 0
-        for i in reversed(range(values.size(0))):
-            R = R * self.gamma * (1 - dones[i]) + values[i]
+        R = last_value
+        for i in reversed(range(rewards.size(0))):
+            R = R * self.gamma * (1 - dones[i]) + rewards[i]
             R_list.append(R)
         R_list = list(reversed(R_list))
         return torch.cat(R_list, 0)

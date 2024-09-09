@@ -1,4 +1,5 @@
 import gym_tetris
+import time
 import torch
 import torch.nn.functional as F
 
@@ -6,8 +7,7 @@ from model import UNREAL
 from gym_tetris.actions import MOVEMENT
 from nes_py.wrappers import JoypadSpace
 
-from utils import preprocess_frame_stack
-from wrapper import ActionRepeatWrapper
+from utils import preprocessing
 
 
 if __name__ == "__main__":
@@ -33,7 +33,7 @@ if __name__ == "__main__":
 
     for i in range(num_tests):
         state, info = env.reset()
-        state = preprocess_frame_stack(state)
+        state = preprocessing(state)
         hx = torch.zeros(1, 256)
         cx = torch.zeros(1, 256)
         prev_action = torch.zeros(1, env.action_space.n).to(device)
@@ -45,14 +45,12 @@ if __name__ == "__main__":
                 policy, _, _, _, (hx, cx) = model(
                     state_tensor, prev_action, prev_reward, (hx, cx)
                 )
-                action: torch.Tensor = policy.argmax()
-
-            # if action.item():
-                # next_state, reward, done, _, info = env.step(0)
-            next_state, reward, done, _, info = env.step(2)
-            env.render()
-            next_state = preprocess_frame_stack(next_state)
-
+                print(policy)
+                action = torch.argmax(policy)
+            _, reward, done, _, _ = env.step(0)  # button release
+            if not done:
+                next_state, _, done, _, info = env.step(action.item())
+                next_state = preprocessing(next_state)
             prev_action = F.one_hot(action.unsqueeze(0), num_classes=env.action_space.n)
             prev_reward = torch.FloatTensor([reward]).unsqueeze(0)
 

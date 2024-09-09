@@ -7,47 +7,112 @@ from collections import deque
 class ReplayBuffer:
     def __init__(self, capacity):
         self.buffer = deque(maxlen=capacity)
+        self.non_rewarding_indices = deque()
+        self.rewarding_indices = deque()
+        self.highest_indices = 0
 
-    def push(self, state, action, reward, next_state, done):
+    def store(
+        self,
+        state: np.ndarray,
+        prev_action: int,
+        prev_reward: float,
+        next_state: np.ndarray,
+        next_action: int,
+        next_reward: float,
+        done: bool,
+    ):
+        frame_index = len(self.buffer) + self.highest_indices
+
         self.buffer.append(
             (
                 [
                     np.expand_dims(state, 0),
-                    action,
-                    reward,
+                    prev_action,
+                    prev_reward,
                     np.expand_dims(next_state, 0),
+                    next_action,
+                    next_reward,
                     done,
                 ]
             )
         )
 
-    def sample(self, batch_size):
-            max_start_idx = len(self.buffer) - batch_size
-            start_idx = random.randint(0, max_start_idx)
-            batch = list(self.buffer)[start_idx : start_idx + batch_size]
-            state, action, reward, next_state, done = map(
-                np.stack, zip(*batch)
-            )
-            return state, action, reward, next_state, done
+        if frame_index >= 3:
+            if next_reward != 0:
+                self.rewarding_indices.append(frame_index)
+            else:
+                self.non_rewarding_indices.append(frame_index)
 
-    def sample_rp(self, batch_size):
-        zero_reward_indices = [
-            i for i, (_, _, r, _, _) in enumerate(self.buffer) if r == 0
-        ]
-        non_zero_reward_indices = [
-            i for i, (_, _, r, _, _) in enumerate(self.buffer) if r != 0
-        ]
+        if self._is_full():
+            self.highest_indices += 1
+            cut_frame_index = self.highest_indices + 2
 
-        n_non_zero = min(batch_size // 2, len(non_zero_reward_indices))
-        n_zero = batch_size - n_non_zero
+            while len(self.non_rewarding_indices) > 0 and self.non_rewarding_indices[0] < cut_frame_index:
+                self.non_rewarding_indices.popleft()
 
-        sampled_indices = random.sample(
-            non_zero_reward_indices, n_non_zero
-        ) + random.sample(zero_reward_indices, n_zero)
+            while len(self.rewarding_indices) > 0 and self.rewarding_indices[0] < cut_frame_index:
+                self.rewarding_indices.popleft()
 
-        batch = [self.buffer[i] for i in sampled_indices]
-        state, _, reward, _, _ = map(np.stack, zip(*batch))
-        return state, reward
+    def _is_full(self):
+        return len(self.buffer) >= self.buffer.maxlen
+
+    def sample(self, batch_size, base = False):
+        max_start_idx = len(self.buffer) - batch_size
+        start_idx = random.randint(0, max_start_idx)
+        if base:
+            start_idx = max_start_idx
+        batch = list(self.buffer)[start_idx : start_idx + batch_size]
+        (
+            states,
+            prev_actions,
+            prev_rewards,
+            next_states,
+            next_actions,
+            next_rewards,
+            dones,
+        ) = map(np.stack, zip(*batch))
+        return (
+            states,
+            prev_actions,
+            prev_rewards,
+            next_states,
+            next_actions,
+            next_rewards,
+            dones,
+        )
+
+    def sample_rp(self, batch_size=3):
+        if random.random() < 0.5:
+            zero_reward = True
+        else:
+            zero_reward = False
+
+        if len(self.rewarding_indices) < 1:
+            zero_reward = True
+        elif len(self.non_rewarding_indices) < 1:
+            zero_reward = False
+
+        if zero_reward:
+            index = np.random.randint(0, len(self.non_rewarding_indices))
+            end_frame_index = self.non_rewarding_indices[index]
+        else:
+            index = np.random.randint(0, len(self.rewarding_indices))
+            end_frame_index = self.rewarding_indices[index]
+
+        start_frame_index = end_frame_index - (batch_size - 1)
+        raw_start_frame_index = start_frame_index - self.highest_indices
+
+        batch = [self.buffer[raw_start_frame_index + i] for i in range(batch_size)]
+        (
+            states,
+            prev_actions,
+            prev_rewards,
+            next_states,
+            next_actions,
+            next_rewards,
+            dones,
+        ) = map(np.stack, zip(*batch))
+        return states, prev_rewards, next_rewards
 
     def clear(self):
         self.buffer.clear()

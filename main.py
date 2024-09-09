@@ -2,7 +2,6 @@ import os
 
 os.environ["OMP_NUM_THREADS"] = "1"
 
-import sys
 import json
 import torch
 import shutil
@@ -11,11 +10,10 @@ import torch.multiprocessing as mp
 
 from model import UNREAL
 from worker import worker
-from optimizer import SharedAdam
+from optimizer import SharedAdam, SharedRMSprop
 from torch import manual_seed, load
-from replay_buffer import ReplayBuffer
 from gym_tetris.actions import MOVEMENT
-from utils import model_logger, update_progress
+from utils import update_progress
 from torch.cuda import manual_seed as cuda_manual_seed
 
 
@@ -27,12 +25,18 @@ def get_args():
             UNTUK MENGHASILKAN AGEN CERDAS (STUDI KASUS: PERMAINAN TETRIS)
         """
     )
-    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=0.00064, help="Learning rate")
     parser.add_argument(
-        "--gamma", type=float, default=0.9, help="discount factor for rewards"
+        "--gamma", type=float, default=0.99, help="discount factor for rewards"
     )
-    parser.add_argument("--beta", type=float, default=0.01, help="entropy coefficient")
-    parser.add_argument("--task-weight", type=float, default=0.1, help="task weight")
+    parser.add_argument("--beta", type=float, default=0.00077, help="entropy coefficient")
+    parser.add_argument("--task-weight", type=float, default=0.01057, help="task weight")
+    parser.add_argument(
+        "--optimizer",
+        type=str,
+        default="adam",
+        help="optimizer yang digunakan",
+    )
     parser.add_argument(
         "--unroll-steps",
         type=int,
@@ -42,11 +46,11 @@ def get_args():
     parser.add_argument(
         "--save-interval",
         type=int,
-        default=1e3,
+        default=5e3,
         help="jumlah steps sebelum menyimpan model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=2e6, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=2e7, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
@@ -54,7 +58,7 @@ def get_args():
     parser.add_argument(
         "--num-agents",
         type=int,
-        default=4,
+        default=mp.cpu_count(),
         help="Jumlah agen yang berjalan secara asinkron",
     )
     parser.add_argument(
@@ -72,7 +76,7 @@ def get_args():
     parser.add_argument(
         "--resume-training",
         type=bool,
-        default=True,
+        default=False,
         help="Load weight from previous trained stage",
     )
     args = parser.parse_args()
@@ -81,11 +85,8 @@ def get_args():
 
 def train(params: argparse.Namespace) -> None:
     try:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        if device.type == "cuda":
-            cuda_manual_seed(42)
-        else:
-            manual_seed(42)
+        device = torch.device("cpu")
+        manual_seed(42)
 
         if os.path.isdir(params.log_path):
             shutil.rmtree(params.log_path)
@@ -96,13 +97,16 @@ def train(params: argparse.Namespace) -> None:
             len(MOVEMENT),
             device=torch.device("cpu"),
             hidden_size=params.hidden_size,
+            beta=params.beta,
+            gamma=params.gamma
         )
         global_model.train()
 
-        optimizer = SharedAdam(global_model.parameters(), lr=params.lr)
+        if opt.optimizer == "adam":
+            optimizer = SharedAdam(global_model.parameters(), lr=params.lr)
+        elif opt.optimizer == "rmsprop":
+            optimizer = SharedRMSprop(global_model.parameters(), lr=params.lr)
         optimizer.share_memory()
-
-        shared_replay_buffer = ReplayBuffer(2000)
 
         processes = []
         global_steps = mp.Value("i", 0)
@@ -146,16 +150,21 @@ def train(params: argparse.Namespace) -> None:
                     rank,
                     global_model,
                     optimizer,
-                    shared_replay_buffer,
                     global_steps,
                     global_episodes,
                     shared_dict,
                     params,
+                    device,
                     (
                         agent_checkpoint[f"agent_{rank}"]
                         if opt.resume_training
                         and os.path.isfile(f"{opt.model_path}/a3c_checkpoint.tar")
                         else 0
+                    ),
+                    (
+                        checkpoint["num_tries"]
+                        if opt.resume_training and os.path.isfile(f"{opt.model_path}/a3c_checkpoint.tar")
+                        else 1
                     ),
                 ),
             )
