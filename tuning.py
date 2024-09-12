@@ -24,12 +24,11 @@ from multiprocessing.synchronize import Event
 from optimizer import SharedAdam, SharedRMSprop
 from utils import ensure_share_grads, preprocessing
 from multiprocessing.sharedctypes import Synchronized
-from gymnasium.wrappers import RecordEpisodeStatistics
 
 
 def print_best_trial(trials, index: int, metric_name: str):
     best_trial = max(trials, key=lambda t: t.values[index])
-    print(f"Trial with highest {metric_name}:")
+    print(f"\nTrial with highest {metric_name}:")
     print(f"\tnumber: {best_trial.number}")
     print(f"\tparams: {best_trial.params}")
     print(f"\tvalues: {best_trial.values}")
@@ -41,7 +40,8 @@ def train(
     params: dict,
     global_model: UNREAL,
     optimizer: Union[SharedAdam, SharedRMSprop],
-    global_block_placed: Synchronized,
+    global_rewards: Synchronized,
+    # global_block_placed: Synchronized,
     stop_event: Event,
     trial: optuna.Trial,
 ) -> None:
@@ -50,13 +50,14 @@ def train(
 
         torch.manual_seed(42 + rank)
         env = gym_tetris.make(
-            "TetrisA-v3",
+            "TetrisA-v4",
             apply_api_compatibility=True,
-            render_mode="human" if not rank else "rgb_array",
+            render_mode="rgb_array",
         )
         env.metadata["render_modes"] = ["rgb_array", "human"]
         env.metadata["render_fps"] = 60
         env = JoypadSpace(env, MOVEMENT)
+        env = FrameSkipWrapper(env)
 
         local_model = UNREAL(
             n_inputs=(3, 84, 84),
@@ -71,7 +72,7 @@ def train(
 
         done = True
         num_games = 0
-        block_placed = 0
+        # block_placed = 0
         eps_length = 0
         num_lines = 0
 
@@ -89,8 +90,10 @@ def train(
                     cx = torch.zeros(1, params["hidden_size"]).to(device)
 
                     if not rank and num_games:
-                        block_placed += episode_blocks
-                        trial.report(block_placed / num_games, step=num_games)
+                        # block_placed += episode_blocks
+                        with global_rewards.get_lock():
+                            global_rewards.value += episode_reward
+                        trial.report(global_rewards.value, step=num_games)
 
                         if trial.should_prune():
                             stop_event.set()
@@ -104,7 +107,6 @@ def train(
                     hx = hx.data
                     cx = cx.data
 
-                env.render()
                 state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
                 policy, _, _, _, (hx, cx) = local_model(
                     state_tensor, prev_action, prev_reward, (hx, cx)
@@ -115,8 +117,10 @@ def train(
 
                 next_state, reward, done, _, info = env.step(action.item())
                 if done:
-                    reward -= 20
-                episode_blocks = sum(info["statistics"].values())
+                    reward -= 10
+                # episode_blocks = sum(info["statistics"].values())
+                with global_rewards.get_lock():
+                    global_rewards.value += reward
                 episode_reward += reward
                 next_state = preprocessing(next_state)
 
@@ -184,28 +188,26 @@ def train(
         print(e)
 
     finally:
-        with global_block_placed.get_lock():
-            global_block_placed.value += (block_placed + episode_blocks) / (num_games + 1)
-        print(global_block_placed.value)
+        # with global_block_placed.get_lock():
+        #     global_block_placed.value += (block_placed + episode_blocks) / (num_games + 1)
         env.close()
 
 
 def objective(trial: optuna.Trial):
     try:
         env = gym_tetris.make(
-            "TetrisA-v3", apply_api_compatibility=True, render_mode="human"
+            "TetrisA-v4", apply_api_compatibility=True, render_mode="rgb_array"
         )
         env.metadata["render_modes"] = ["rgb_array", "human"]
         env.metadata["render_fps"] = 60
         env = JoypadSpace(env, MOVEMENT)
         env = FrameSkipWrapper(env)
-        # env = RecordEpisodeStatistics(env, deque_size=10)
 
         params = {
             "lr": trial.suggest_float("learning rate", 1e-4, 5e-3, log=True),
             "task_weight": trial.suggest_float("pc weight", 0.01, 0.1, log=True),
             "beta": trial.suggest_float("entropy coefficient", 5e-4, 1e-2, log=True),
-            "optimizer": trial.suggest_categorical("optimizer", ["Adam", "RMSProp"]),
+            "optimizer": "RMSProp",
             "device": torch.device("cuda"),
             "gamma": 0.99,
             "hidden_size": 256,
@@ -236,6 +238,7 @@ def objective(trial: optuna.Trial):
         processes = []
         stop_event = mp.Event()
         global_block_placed = mp.Value("f", 0.0)
+        global_rewards = mp.Value("f", 0.0)
         start_time = time.time()
 
         for rank in range(params["num_agents"]):
@@ -246,7 +249,8 @@ def objective(trial: optuna.Trial):
                     params,
                     global_model,
                     optimizer,
-                    global_block_placed,
+                    global_rewards,
+                    # global_block_placed,
                     stop_event,
                     trial,
                 ),
@@ -280,9 +284,12 @@ def objective(trial: optuna.Trial):
         # mean_lines = total_lines / num_test
         # mean_blocks = total_blocks / num_test
         # mean_eps_length = episode_length / num_test
-        mean_blocks = global_block_placed.value / params["num_agents"]
-        return mean_blocks
+        # mean_blocks = global_block_placed.value / params["num_agents"]
+        # return mean_blocks
         # , mean_lines, mean_eps_length
+        mean_rewards = global_rewards.value / params["num_agents"]
+        return mean_rewards
+
 
     except KeyboardInterrupt:
         raise KeyboardInterrupt("Tuning dihentikan.")
@@ -304,7 +311,7 @@ if __name__ == "__main__":
         if os.path.isfile("./tuning/sampler.pkl"):
             restored_sampler = pickle.load(open("tuning/sampler.pkl", "rb"))
             study = optuna.create_study(
-                study_name="tetris-a3c",
+                study_name="unreal-a3c",
                 storage=storage,
                 load_if_exists=True,
                 directions=["maximize"],
@@ -312,7 +319,7 @@ if __name__ == "__main__":
             )
         else:
             study = optuna.create_study(
-                study_name="tetris-a3c",
+                study_name="unreal-a3c",
                 storage=storage,
                 load_if_exists=True,
                 directions=["maximize"],
@@ -332,7 +339,8 @@ if __name__ == "__main__":
         print(f"Number of trials on the Pareto front: {len(study.best_trials)}")
 
         metrics = [
-            (0, "blocks placed"),
+            (0, "rewards"),
+            # (0, "blocks placed"),
             # (1, "lines cleared"),
             # (2, "episodes length"),
         ]

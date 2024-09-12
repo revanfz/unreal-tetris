@@ -147,5 +147,6 @@ if __name__ == "__main__":
             local_model=local_model, global_model=global_model, device=device
         )
         optimizer.step()
+        break
 
         # break

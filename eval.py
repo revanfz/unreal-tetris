@@ -12,7 +12,7 @@ from utils import preprocessing
 
 if __name__ == "__main__":
     env = gym_tetris.make(
-        "TetrisA-v3", render_mode="human", apply_api_compatibility=True
+        "TetrisA-v4", render_mode="human", apply_api_compatibility=True
     )
     env = JoypadSpace(env, MOVEMENT)
     # env = ActionRepeatWrapper(env)

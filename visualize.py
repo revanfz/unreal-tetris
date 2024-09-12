@@ -102,7 +102,7 @@ def visualize_conv_output(model, input_tensor):
 # Contoh penggunaan
 
 env = gym_tetris.make(
-    "TetrisA-v3",
+    "TetrisA-v4",
     apply_api_compatibility=True,
     render_mode="rgb_array",
 )

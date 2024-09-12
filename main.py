@@ -25,16 +25,16 @@ def get_args():
             UNTUK MENGHASILKAN AGEN CERDAS (STUDI KASUS: PERMAINAN TETRIS)
         """
     )
-    parser.add_argument("--lr", type=float, default=0.00064, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=0.00058, help="Learning rate")
     parser.add_argument(
         "--gamma", type=float, default=0.99, help="discount factor for rewards"
     )
-    parser.add_argument("--beta", type=float, default=0.00077, help="entropy coefficient")
-    parser.add_argument("--task-weight", type=float, default=0.01057, help="task weight")
+    parser.add_argument("--beta", type=float, default=0.0006, help="entropy coefficient")
+    parser.add_argument("--task-weight", type=float, default=0.02426, help="task weight")
     parser.add_argument(
         "--optimizer",
         type=str,
-        default="adam",
+        default="rmsprop",
         help="optimizer yang digunakan",
     )
     parser.add_argument(
@@ -46,8 +46,8 @@ def get_args():
     parser.add_argument(
         "--save-interval",
         type=int,
-        default=5e3,
-        help="jumlah steps sebelum menyimpan model",
+        default=1e3,
+        help="jumlah episode sebelum menyimpan checkpoint model",
     )
     parser.add_argument(
         "--max-steps", type=int, default=2e7, help="Maksimal step pelatihan"
@@ -64,7 +64,7 @@ def get_args():
     parser.add_argument(
         "--log-path",
         type=str,
-        default="tensorboard/a3c_tetris",
+        default="tensorboard",
         help="direktori plotting tensorboard",
     )
     parser.add_argument(
@@ -76,7 +76,7 @@ def get_args():
     parser.add_argument(
         "--resume-training",
         type=bool,
-        default=False,
+        default=True,
         help="Load weight from previous trained stage",
     )
     args = parser.parse_args()
@@ -88,9 +88,9 @@ def train(params: argparse.Namespace) -> None:
         device = torch.device("cpu")
         manual_seed(42)
 
-        if os.path.isdir(params.log_path):
-            shutil.rmtree(params.log_path)
-        os.makedirs(params.log_path)
+        if not os.path.isdir(params.log_path):
+            # shutil.rmtree(params.log_path)
+            os.makedirs(params.log_path)
 
         global_model = UNREAL(
             (3, 84, 84),
@@ -100,13 +100,11 @@ def train(params: argparse.Namespace) -> None:
             beta=params.beta,
             gamma=params.gamma
         )
-        global_model.train()
 
         if opt.optimizer == "adam":
             optimizer = SharedAdam(global_model.parameters(), lr=params.lr)
         elif opt.optimizer == "rmsprop":
             optimizer = SharedRMSprop(global_model.parameters(), lr=params.lr)
-        optimizer.share_memory()
 
         processes = []
         global_steps = mp.Value("i", 0)
@@ -120,7 +118,7 @@ def train(params: argparse.Namespace) -> None:
             if os.path.isdir(opt.model_path):
                 file_ = f"{opt.model_path}/a3c_checkpoint.tar"
                 if os.path.isfile(file_):
-                    checkpoint = load(file_)
+                    checkpoint = load(file_, weights_only=True)
                     global_model.load_state_dict(checkpoint["model_state_dict"])
                     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
                     global_steps = mp.Value("i", checkpoint["steps"])
@@ -136,6 +134,9 @@ def train(params: argparse.Namespace) -> None:
                 print("Membuat direktori model...")
                 os.makedirs(opt.model_path)
                 print("Memulai training...")
+
+        global_model.train()
+        optimizer.share_memory()
 
         progress_process = mp.Process(
             target=update_progress, args=(global_steps, opt.max_steps)

@@ -33,13 +33,15 @@ def worker(
         finished = False
         torch.manual_seed(42 + rank)
         if not rank:
-            writer = SummaryWriter(f"{params.log_path}_N{num_tries}_Eps{global_episodes.value}")
+            writer = SummaryWriter(f"{params.log_path}/tetris-a3c_tries-{num_tries}_eps-{global_episodes.value}")
 
         env = gym_tetris.make(
-            "TetrisA-v3",
+            "TetrisA-v4",
             apply_api_compatibility=True,
             render_mode="human" if not rank else "rgb_array",
         )
+        env.metadata["render_modes"] = ["rgb_array", "human"]
+        env.metadata["render_fps"] = 60
         env = JoypadSpace(env, MOVEMENT)
         env = FrameSkipWrapper(env)
 
@@ -84,7 +86,7 @@ def worker(
 
                 next_state, reward, done, _, info = env.step(action.item())
                 if done:
-                    reward -= 20
+                    reward -= 10
                 next_state = preprocessing(next_state)
 
                 experience_replay.store(
@@ -106,17 +108,6 @@ def worker(
                 episode_reward += reward
                 with global_steps.get_lock():
                     global_steps.value += 1
-                    if global_steps.value % params.save_interval == 0:
-                        torch.save(
-                            {
-                                "num_tries": num_tries,
-                                "model_state_dict": global_model.state_dict(),
-                                "optimizer_state_dict": optimizer.state_dict(),
-                                "steps": global_steps.value,
-                                "episodes": global_episodes.value,
-                            },
-                            f"{params.model_path}/a3c_checkpoint.tar",
-                        )
 
             # Hitung loss A3C
             # 1. Sampel replay buffer secara sekuensial
@@ -184,6 +175,18 @@ def worker(
             with global_episodes.get_lock():
                 global_episodes.value += 1
 
+                if global_episodes.value % params.save_interval == 0:
+                    torch.save(
+                        {
+                            "num_tries": num_tries,
+                            "model_state_dict": global_model.state_dict(),
+                            "optimizer_state_dict": optimizer.state_dict(),
+                            "steps": global_steps.value,
+                            "episodes": global_episodes.value,
+                        },
+                        f"{params.model_path}/a3c_checkpoint.tar",
+                    )
+
         if not rank:
             torch.save(global_model.state_dict(), f"{params.model_path}/a3c_tetris.pt")
         finished = True
@@ -198,7 +201,7 @@ def worker(
         raise Exception(f"Multiprocessing error\t{e}.")
 
     except Exception as e:
-        print(f"Error ;X\n{e}")
+        print(f"\nError ;X\t{e}")
         raise Exception(f"{e}")
 
     finally:
