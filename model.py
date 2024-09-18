@@ -23,21 +23,23 @@ class ConvNet(nn.Module):
         Tensor
     """
 
-    def __init__(self, n_inputs: int, hidden_size: tuple):
+    def __init__(self, n_inputs: tuple, hidden_size: int):
         super(ConvNet, self).__init__()
         self.conv_layer = nn.Sequential(
-            nn.Conv2d(n_inputs[0], 16, kernel_size=8, stride=4),
+            nn.Conv2d(n_inputs[-1], 16, kernel_size=8, stride=4),
             nn.ReLU(inplace=True),
             nn.Conv2d(16, 32, kernel_size=4, stride=2),
             nn.ReLU(inplace=True),
         )
         self.fc_layer = nn.Sequential(
-            nn.Linear(self._feature_size(n_inputs), hidden_size), nn.ReLU(inplace=True)
+            nn.Linear(self._feature_size(n_inputs[-1], n_inputs[0]), hidden_size), nn.ReLU(inplace=True)
         )
 
-    def _feature_size(self, n_inputs: int):
+    def _feature_size(self, c: int, h: int):
+        w = h
+        shape = (c, h, w)
         with torch.no_grad():
-            o = self.conv_layer(torch.zeros(1, *n_inputs))
+            o = self.conv_layer(torch.zeros(1, *shape))
         return int(np.prod(o.size()))
 
     def forward(self, observation: torch.Tensor):
@@ -63,7 +65,7 @@ class LSTMNet(nn.Module):
 
     def forward(self, conv_feature, hidden):
         lstm_feature, new_hidden = self.lstm_layer(conv_feature, hidden)
-        return lstm_feature, (lstm_feature, new_hidden)
+        return lstm_feature, new_hidden
 
 
 class ActorCritic(nn.Module):
@@ -221,9 +223,9 @@ class UNREAL(nn.Module):
     ):
         conv_feat = self.conv_layer(state)
         lstm_input = torch.cat([conv_feat, action_oh, reward], dim=1)
-        lstm_feat, new_hidden = self.lstm_layer(lstm_input, hidden)
+        lstm_feat, lstm_cell = self.lstm_layer(lstm_input, hidden)
         policy, value = self.ac_layer(lstm_feat)
-        return policy, value, conv_feat, lstm_feat, new_hidden
+        return policy, value, conv_feat, lstm_feat, lstm_cell
 
     def a3c_loss(
         self,
@@ -231,7 +233,7 @@ class UNREAL(nn.Module):
         rewards: np.ndarray,
         actions: np.ndarray,
         dones: np.ndarray,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         states = torch.FloatTensor(states).to(self.device).squeeze(1)
         rewards = torch.FloatTensor(rewards).to(self.device).unsqueeze(1)
         dones = torch.FloatTensor(dones).to(self.device).unsqueeze(1)
@@ -244,9 +246,9 @@ class UNREAL(nn.Module):
         log_probs = dist.log_prob(actions)
 
         R = self.calculate_returns(rewards, dones, values[-1]).unsqueeze(1)
-        delta = R.detach() - values
-        policy_loss = (-delta.detach() * log_probs - self.beta * entropy).mean()
-        value_loss = delta.pow(2).mean()
+        advantage = R.detach() - values
+        policy_loss = (-advantage.detach() * log_probs - self.beta * entropy).mean()
+        value_loss = advantage.pow(2).mean()
         return (policy_loss, value_loss, entropy)
 
     def control_loss(
@@ -277,7 +279,7 @@ class UNREAL(nn.Module):
         next_conv_feat = self.conv_layer(next_states)
         next_lstm_input = torch.cat([next_conv_feat, next_actions_oh, next_rewards], dim=1)
         next_lstm_feat, _ = self.lstm_layer(next_lstm_input, None)
-        next_q_aux: torch. Tensor = self.pc_layer(next_lstm_feat)
+        next_q_aux: torch.Tensor = self.pc_layer(next_lstm_feat)
 
         cropped_states = preprocessing(states, pixel_control=True)
         cropped_next_states = preprocessing(next_states, pixel_control=True)

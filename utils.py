@@ -1,21 +1,27 @@
+import gym_tetris
+
 import time
-import logging
 import numpy as np
 
 from tqdm import tqdm
 from torch import device
+from gym.wrappers import (
+    FrameStack,
+    ResizeObservation,
+    GrayScaleObservation,
+)
+
+from torch import Tensor, float32
+from wrapper import FrameSkipWrapper
 from torchvision.transforms import v2
-from torch.multiprocessing import Queue
-from torch import Tensor, float32, stack
-from torch.utils.tensorboard import SummaryWriter
+from nes_py.wrappers import JoypadSpace
+from gym_tetris.actions import MOVEMENT
 from multiprocessing.sharedctypes import Synchronized
-from torchvision.utils import save_image
 
 
 def preprocessing(state: np.ndarray, pixel_control: bool = False) -> Tensor:
     if pixel_control:
-        # obs = v2.CenterCrop(80)(state)
-        obs = v2.Resize(80)(state)
+        obs = v2.CenterCrop(80)(state)
     else:
         preprocess = v2.Compose(
             [
@@ -27,6 +33,27 @@ def preprocessing(state: np.ndarray, pixel_control: bool = False) -> Tensor:
         )
         obs = preprocess(state.copy()).numpy()
     return obs
+
+def make_env(
+    id: str = "TetrisA-v2",
+    grayscale: bool = True,
+    resize: int = 0,
+    render_mode="rgb_array",
+    framestack: int = 4,
+):
+    env = gym_tetris.make(id, apply_api_compatibility=True, render_mode=render_mode)
+    env.metadata["render_modes"] = ["rgb_array", "human"]
+    env.metadata["render_fps"] = 60
+    env = JoypadSpace(env, MOVEMENT)
+    if grayscale:
+        env = GrayScaleObservation(env, keep_dim=True)
+    if resize:
+        env = ResizeObservation(env, resize)
+    if framestack:
+        env = FrameStack(env, framestack)
+    env = FrameSkipWrapper(env)
+
+    return env
 
 
 def ensure_share_grads(
@@ -43,40 +70,6 @@ def ensure_share_grads(
             global_param._grad = local_param.grad.cpu()
         else:
             global_param._grad = local_param.grad
-
-
-def model_logger(model_queue: Queue, path: str) -> None:
-    writer = SummaryWriter(path)
-    while True:
-        while not model_queue.empty():
-            log_data = model_queue.get()
-            if log_data is None:
-                writer.close()
-                return
-
-            episode = log_data["episode"]
-            writer.add_scalar(f"Global/Rewards", log_data["mean_reward"], episode)
-
-            writer.add_scalar(f"Global/Entropy", log_data["entropy"], episode)
-
-            if episode % 100 == 0:
-                writer.flush()
-
-            if episode % 500 == 0:
-                print("Now in steps {}.".format(log_data["steps"]))
-
-
-def setup_logger(logger_name, log_file, level=logging.INFO):
-    l = logging.getLogger(logger_name)
-    formatter = logging.Formatter("%(asctime)s : %(message)s")
-    fileHandler = logging.FileHandler(log_file, mode="a")
-    fileHandler.setFormatter(formatter)
-    streamHandler = logging.StreamHandler()
-    streamHandler.setFormatter(formatter)
-
-    l.setLevel(level)
-    l.addHandler(fileHandler)
-    l.addHandler(streamHandler)
 
 
 def update_progress(global_steps: Synchronized, max_steps: float, desc=None, unit=None):

@@ -1,8 +1,6 @@
 import os
-
 os.environ["OMP_NUM_THREADS"] = "1"
 
-import json
 import torch
 import shutil
 import argparse
@@ -10,11 +8,9 @@ import torch.multiprocessing as mp
 
 from model import UNREAL
 from worker import worker
-from optimizer import SharedAdam, SharedRMSprop
 from torch import manual_seed, load
-from gym_tetris.actions import MOVEMENT
-from utils import update_progress
-from torch.cuda import manual_seed as cuda_manual_seed
+from utils import make_env, update_progress
+from optimizer import SharedAdam, SharedRMSprop
 
 
 def get_args():
@@ -25,12 +21,12 @@ def get_args():
             UNTUK MENGHASILKAN AGEN CERDAS (STUDI KASUS: PERMAINAN TETRIS)
         """
     )
-    parser.add_argument("--lr", type=float, default=0.00058, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=0.00103, help="Learning rate")
     parser.add_argument(
         "--gamma", type=float, default=0.99, help="discount factor for rewards"
     )
-    parser.add_argument("--beta", type=float, default=0.0006, help="entropy coefficient")
-    parser.add_argument("--task-weight", type=float, default=0.02426, help="task weight")
+    parser.add_argument("--beta", type=float, default=0.00271, help="entropy coefficient")
+    parser.add_argument("--task-weight", type=float, default=0.01336, help="task weight")
     parser.add_argument(
         "--optimizer",
         type=str,
@@ -50,7 +46,7 @@ def get_args():
         help="jumlah episode sebelum menyimpan checkpoint model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=2e7, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=15e6, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
@@ -76,7 +72,7 @@ def get_args():
     parser.add_argument(
         "--resume-training",
         type=bool,
-        default=True,
+        default=False,
         help="Load weight from previous trained stage",
     )
     args = parser.parse_args()
@@ -87,14 +83,12 @@ def train(params: argparse.Namespace) -> None:
     try:
         device = torch.device("cpu")
         manual_seed(42)
-
-        if not os.path.isdir(params.log_path):
-            # shutil.rmtree(params.log_path)
-            os.makedirs(params.log_path)
+        
+        env = make_env(grayscale=False, framestack=None, resize=None)
 
         global_model = UNREAL(
-            (3, 84, 84),
-            len(MOVEMENT),
+            n_inputs=(84, 84, 3),
+            n_actions=env.action_space.n,
             device=torch.device("cpu"),
             hidden_size=params.hidden_size,
             beta=params.beta,
@@ -109,10 +103,6 @@ def train(params: argparse.Namespace) -> None:
         processes = []
         global_steps = mp.Value("i", 0)
         global_episodes = mp.Value("i", 0)
-        global_rewards = mp.Value("f", 0.0)
-        res_queue = mp.Queue()
-        manager = mp.Manager()
-        shared_dict = manager.dict()
 
         if opt.resume_training:
             if os.path.isdir(opt.model_path):
@@ -123,10 +113,8 @@ def train(params: argparse.Namespace) -> None:
                     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
                     global_steps = mp.Value("i", checkpoint["steps"])
                     global_episodes = mp.Value("i", checkpoint["episodes"])
-                    with open("checkpoint.json") as f:
-                        agent_checkpoint = json.load(f)
                     print(
-                        f"Resuming training for previous model, state: Steps {checkpoint['steps']}, Episodes: {checkpoint['episodes']}\nAgent state: {agent_checkpoint}"
+                        f"Resuming training for previous model, state: Steps {checkpoint['steps']}, Episodes: {checkpoint['episodes']}"
                     )
                 else:
                     print("File checkpoint belum ada, memulai training...")
@@ -153,20 +141,8 @@ def train(params: argparse.Namespace) -> None:
                     optimizer,
                     global_steps,
                     global_episodes,
-                    shared_dict,
                     params,
-                    device,
-                    (
-                        agent_checkpoint[f"agent_{rank}"]
-                        if opt.resume_training
-                        and os.path.isfile(f"{opt.model_path}/a3c_checkpoint.tar")
-                        else 0
-                    ),
-                    (
-                        checkpoint["num_tries"]
-                        if opt.resume_training and os.path.isfile(f"{opt.model_path}/a3c_checkpoint.tar")
-                        else 1
-                    ),
+                    device
                 ),
             )
             process.start()
@@ -185,8 +161,6 @@ def train(params: argparse.Namespace) -> None:
     finally:
         for process in processes:
             process.terminate()
-        with open("checkpoint.json", "w") as f:
-            json.dump(dict(shared_dict), f, indent=4)
 
 
 if __name__ == "__main__":

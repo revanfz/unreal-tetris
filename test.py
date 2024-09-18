@@ -12,7 +12,7 @@ from replay_buffer import ReplayBuffer
 from nes_py.wrappers import JoypadSpace
 from gym_tetris.actions import MOVEMENT
 from torch.distributions import Categorical
-from utils import preprocessing, ensure_share_grads
+from utils import make_env, preprocessing, ensure_share_grads
 
 params = {
     "lr": 0.0005,
@@ -26,23 +26,17 @@ params = {
 device = torch.device("cpu")
 
 if __name__ == "__main__":
-    env = gym_tetris.make(
-        "TetrisA-v4",
-        apply_api_compatibility=True,
-        render_mode="human",
-    )
-    env = JoypadSpace(env, MOVEMENT)
-    env = FrameSkipWrapper(env)
+    env = make_env(resize=None, grayscale=False, framestack=None, render_mode="human")
 
     global_model = UNREAL(
-        n_inputs=(3, 84, 84),
+        n_inputs=(84, 84, 3),
         n_actions=env.action_space.n,
         hidden_size=256,
         device=device,
     )
     optimizer = SharedRMSprop(global_model.parameters(), params["lr"])
     local_model = UNREAL(
-        n_inputs=(3, 84, 84),
+        n_inputs=(84, 84, 3),
         n_actions=env.action_space.n,
         hidden_size=256,
         device=device,
@@ -75,17 +69,17 @@ if __name__ == "__main__":
                 num_games += 1
                 episode_reward = 0
                 episode_blocks = 0
-                sleep(1)
-            env.render()
+                
             state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
-            policy, _, _, _, (hx, cx) = local_model(
+            policy, _, _, hx, cx = local_model(
                 state_tensor, prev_action, prev_reward, (hx, cx)
             )
 
             dist = Categorical(policy)
             action = dist.sample().detach()
 
-            next_state, reward, done, _, info = env.step(action.item())
+            next_state, reward, done, _, info = env.step(9)
+            print(info)
             episode_blocks = sum(info["statistics"].values())
             next_state = preprocessing(next_state)
             episode_reward += reward
@@ -147,6 +141,5 @@ if __name__ == "__main__":
             local_model=local_model, global_model=global_model, device=device
         )
         optimizer.step()
-        break
 
         # break

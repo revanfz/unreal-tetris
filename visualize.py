@@ -1,17 +1,14 @@
-import gym_tetris
 
 import cv2
-import torch
-import torch.nn as nn
 import numpy as np
+import torch.nn as nn
 import matplotlib.pyplot as plt
 
-from model import UNREAL
-from nes_py.wrappers import JoypadSpace
-from gym_tetris.actions import MOVEMENT
-from torch import Tensor, float32, stack
+from torch import Tensor, float32, FloatTensor
 from torchvision.transforms import v2
 from torchvision.utils import save_image
+
+from utils import make_env
 
 def preprocessing(state: np.ndarray) -> Tensor:
     preprocess = v2.Compose(
@@ -40,11 +37,9 @@ class SimpleConvNet(nn.Module):
     def __init__(self, input_channels=3):
         super(SimpleConvNet, self).__init__()
         self.conv_layers = nn.Sequential(
-            # nn.Conv2d(input_channels, 16, kernel_size=8, stride=4),
-            # nn.ReLU(inplace=True),
-            # nn.Conv2d(16, 32, kernel_size=4, stride=2),
-            # nn.ReLU(inplace=True),
-            nn.AvgPool2d(kernel_size=4, stride=4),
+            nn.Conv2d(input_channels, 16, kernel_size=8, stride=4),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(16, 32, kernel_size=4, stride=2),
             nn.ReLU(inplace=True)
         )
 
@@ -62,7 +57,7 @@ def visualize_conv_output(model, input_tensor):
     # Mendaftarkan hook untuk setiap lapisan konvolusi
     hooks = []
     for layer in model.conv_layers:
-        if isinstance(layer, nn.AvgPool2d):
+        if isinstance(layer, nn.Conv2d):
             hooks.append(layer.register_forward_hook(hook_fn))
 
     # Melewatkan input melalui model
@@ -97,31 +92,39 @@ def visualize_conv_output(model, input_tensor):
     plt.show()
 
 
+
+def plot_observation(observation):
+    # observasi adalah array dengan shape (4, 84, 84)
+    plt.imshow(observation)
+    plt.axis('off')  # Mematikan sumbu untuk tampilan gambar yang lebih bersih
+    
+    plt.tight_layout()
+    plt.show()
+
 # Create model and sample input
 
 # Contoh penggunaan
 
-env = gym_tetris.make(
-    "TetrisA-v4",
-    apply_api_compatibility=True,
-    render_mode="rgb_array",
-)
-env = JoypadSpace(env, MOVEMENT)
-env.metadata["render_modes"] = ["rgb_array", "human"]
-env.metadata["render_fps"] = 60
-_, _ = env.reset()
+env = make_env(grayscale=False, resize=None, normalize=True, framestack=None)
+env.reset()
+model = SimpleConvNet(input_channels=env.observation_space.shape[-1])
 
-model = SimpleConvNet(input_channels=3)
-
-for i in range(2000):
+for i in range(4):
     action = env.action_space.sample()
-    state, reward, done, _, info = env.step(0)
-    state, reward, done, _, info = env.step(env.action_space.sample())
-img_path = "./input.png"
-img = cv2.imread(img_path)
-img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-img_arr = np.array(img)
-state = torch.FloatTensor(preprocess_frame_stack(img_arr)).unsqueeze(0)
-state = pixel_control(state)
+    state, reward, done, _, info = env.step(action)
+    if done:
+        break
+
+# img_path = "./input.png"
+# img = cv2.imread(img_path)
+# img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+# img_arr = np.array(img)
+# state = torch.FloatTensor(preprocess_frame_stack(img_arr)).unsqueeze(0)
+# state = pixel_control(state)
+state = FloatTensor(state)
 print(state.shape)
+state = preprocessing(FloatTensor(state).permute(2, 0, 1)).unsqueeze(0)
+print(state.shape)
+
+# Plot gambar observasi
 visualize_conv_output(model, state)

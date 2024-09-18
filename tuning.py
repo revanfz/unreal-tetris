@@ -7,7 +7,6 @@ import torch
 import optuna
 import pickle
 import logging
-import gym_tetris
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.multiprocessing as mp
@@ -15,15 +14,12 @@ import torch.multiprocessing as mp
 from tqdm import tqdm
 from typing import Union
 from model import UNREAL
-from wrapper import FrameSkipWrapper
 from replay_buffer import ReplayBuffer
-from gym_tetris.actions import MOVEMENT
-from nes_py.wrappers import JoypadSpace
 from torch.distributions import Categorical
 from multiprocessing.synchronize import Event
 from optimizer import SharedAdam, SharedRMSprop
-from utils import ensure_share_grads, preprocessing
 from multiprocessing.sharedctypes import Synchronized
+from utils import ensure_share_grads, make_env, preprocessing
 
 
 def print_best_trial(trials, index: int, metric_name: str):
@@ -40,8 +36,8 @@ def train(
     params: dict,
     global_model: UNREAL,
     optimizer: Union[SharedAdam, SharedRMSprop],
+    global_steps: Synchronized,
     global_rewards: Synchronized,
-    # global_block_placed: Synchronized,
     stop_event: Event,
     trial: optuna.Trial,
 ) -> None:
@@ -49,18 +45,10 @@ def train(
         device = torch.device("cuda")
 
         torch.manual_seed(42 + rank)
-        env = gym_tetris.make(
-            "TetrisA-v4",
-            apply_api_compatibility=True,
-            render_mode="rgb_array",
-        )
-        env.metadata["render_modes"] = ["rgb_array", "human"]
-        env.metadata["render_fps"] = 60
-        env = JoypadSpace(env, MOVEMENT)
-        env = FrameSkipWrapper(env)
+        env = make_env(resize=84, grayscale=False, framestack=None)
 
         local_model = UNREAL(
-            n_inputs=(3, 84, 84),
+            n_inputs=(84, 84, 3),
             n_actions=env.action_space.n,
             hidden_size=params["hidden_size"],
             beta=params["beta"],
@@ -72,15 +60,14 @@ def train(
 
         done = True
         num_games = 0
-        # block_placed = 0
-        eps_length = 0
-        num_lines = 0
 
         while not stop_event.is_set():
             optimizer.zero_grad()
             local_model.load_state_dict(global_model.state_dict())
 
             for _ in range(params["unroll_steps"]):
+                with global_steps.get_lock():
+                    global_steps.value += 1
                 if done:
                     state, info = env.reset()
                     state = preprocessing(state)
@@ -90,25 +77,15 @@ def train(
                     cx = torch.zeros(1, params["hidden_size"]).to(device)
 
                     if not rank and num_games:
-                        # block_placed += episode_blocks
-                        with global_rewards.get_lock():
-                            global_rewards.value += episode_reward
                         trial.report(global_rewards.value, step=num_games)
-
-                        if trial.should_prune():
-                            stop_event.set()
-                            raise optuna.TrialPruned()
                         
                     num_games += 1
-                    episode_reward = 0
-                    episode_blocks = 0
-                    
                 else:
                     hx = hx.data
                     cx = cx.data
 
                 state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
-                policy, _, _, _, (hx, cx) = local_model(
+                policy, _, _, hx, cx = local_model(
                     state_tensor, prev_action, prev_reward, (hx, cx)
                 )
 
@@ -116,12 +93,9 @@ def train(
                 action = dist.sample().detach()
 
                 next_state, reward, done, _, info = env.step(action.item())
-                if done:
-                    reward -= 10
-                # episode_blocks = sum(info["statistics"].values())
+                reward += 10 ** info["current_lines"]
                 with global_rewards.get_lock():
                     global_rewards.value += reward
-                episode_reward += reward
                 next_state = preprocessing(next_state)
 
                 experience_replay.store(
@@ -176,7 +150,7 @@ def train(
             )
 
             total_loss.backward()
-            nn.utils.clip_grad_norm_(local_model.parameters(), 40)
+            nn.utils.clip_grad_norm_(local_model.parameters(), 10)
             ensure_share_grads(
                 local_model=local_model, global_model=global_model, device=device
             )
@@ -195,13 +169,7 @@ def train(
 
 def objective(trial: optuna.Trial):
     try:
-        env = gym_tetris.make(
-            "TetrisA-v4", apply_api_compatibility=True, render_mode="rgb_array"
-        )
-        env.metadata["render_modes"] = ["rgb_array", "human"]
-        env.metadata["render_fps"] = 60
-        env = JoypadSpace(env, MOVEMENT)
-        env = FrameSkipWrapper(env)
+        env = make_env(resize=84, grayscale=False, framestack=None)
 
         params = {
             "lr": trial.suggest_float("learning rate", 1e-4, 5e-3, log=True),
@@ -213,7 +181,7 @@ def objective(trial: optuna.Trial):
             "hidden_size": 256,
             "n_actions": env.action_space.n,
             "model_path": "trained_models",
-            "input_shape": (3, 84, 84),
+            "input_shape": env.observation_space.shape,
             "unroll_steps": 20,
             "test_episodes": 5,
             "num_agents": 1,
@@ -239,6 +207,7 @@ def objective(trial: optuna.Trial):
         stop_event = mp.Event()
         global_block_placed = mp.Value("f", 0.0)
         global_rewards = mp.Value("f", 0.0)
+        global_steps = mp.Value("i", 0)
         start_time = time.time()
 
         for rank in range(params["num_agents"]):
@@ -249,6 +218,7 @@ def objective(trial: optuna.Trial):
                     params,
                     global_model,
                     optimizer,
+                    global_steps,
                     global_rewards,
                     # global_block_placed,
                     stop_event,
@@ -287,7 +257,7 @@ def objective(trial: optuna.Trial):
         # mean_blocks = global_block_placed.value / params["num_agents"]
         # return mean_blocks
         # , mean_lines, mean_eps_length
-        mean_rewards = global_rewards.value / params["num_agents"]
+        mean_rewards = global_rewards.value / global_steps.value
         return mean_rewards
 
 
@@ -307,29 +277,20 @@ if __name__ == "__main__":
             url="sqlite:///tuning/tuning_a3c.db",
             engine_kwargs={"connect_args": {"timeout": 30}},
         )
+        study = optuna.create_study(
+            study_name="final",
+            storage=storage,
+            load_if_exists=True,
+            directions=["maximize"]
+        )
 
         if os.path.isfile("./tuning/sampler.pkl"):
             restored_sampler = pickle.load(open("tuning/sampler.pkl", "rb"))
-            study = optuna.create_study(
-                study_name="unreal-a3c",
-                storage=storage,
-                load_if_exists=True,
-                directions=["maximize"],
-                pruner=optuna.pruners.HyperbandPruner()
-            )
-        else:
-            study = optuna.create_study(
-                study_name="unreal-a3c",
-                storage=storage,
-                load_if_exists=True,
-                directions=["maximize"],
-                pruner=optuna.pruners.HyperbandPruner()
-            )
+            study.sampler = restored_sampler
 
         completed_trials = len(
             [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
         )
-        # n_trials = 60 - completed_trials
         n_trials = 15
 
         study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
