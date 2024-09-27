@@ -1,27 +1,21 @@
-import gym_tetris
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from time import sleep
 from model import UNREAL
 from optimizer import SharedRMSprop
-from wrapper import FrameSkipWrapper
 from replay_buffer import ReplayBuffer
-from nes_py.wrappers import JoypadSpace
-from gym_tetris.actions import MOVEMENT
 from torch.distributions import Categorical
 from utils import make_env, preprocessing, ensure_share_grads
 
-params = {
-    "lr": 0.0005,
-    "unroll_steps": 20,
-    "beta": 0.00067,
-    "gamma": 0.99,
-    "hidden_size": 256, 
-    "task_weight": 0.01
-}
+params = dict(
+    lr=0.0005,
+    unroll_steps=20,
+    beta=0.00067,
+    gamma=0.99,
+    hidden_size=256, 
+    task_weight=0.01
+)
 
 device = torch.device("cpu")
 
@@ -33,6 +27,8 @@ if __name__ == "__main__":
         n_actions=env.action_space.n,
         hidden_size=256,
         device=device,
+        beta=params["beta"],
+        gamma=params["gamma"]
     )
     optimizer = SharedRMSprop(global_model.parameters(), params["lr"])
     local_model = UNREAL(

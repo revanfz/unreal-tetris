@@ -205,7 +205,6 @@ def objective(trial: optuna.Trial):
 
         processes = []
         stop_event = mp.Event()
-        global_block_placed = mp.Value("f", 0.0)
         global_rewards = mp.Value("f", 0.0)
         global_steps = mp.Value("i", 0)
         start_time = time.time()
@@ -220,7 +219,6 @@ def objective(trial: optuna.Trial):
                     optimizer,
                     global_steps,
                     global_rewards,
-                    # global_block_placed,
                     stop_event,
                     trial,
                 ),
@@ -278,7 +276,7 @@ if __name__ == "__main__":
             engine_kwargs={"connect_args": {"timeout": 30}},
         )
         study = optuna.create_study(
-            study_name="final",
+            study_name="final-tuning",
             storage=storage,
             load_if_exists=True,
             directions=["maximize"]

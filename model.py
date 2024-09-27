@@ -125,35 +125,6 @@ class PixelControl(nn.Module):
         return F.relu(q_aux)
 
 
-class FeatureControl(nn.Module):
-    """
-    Modul feature control
-    Mengukur seberapa sering hidden unit diaktivasi selama pelatihan
-    input:
-        Tensor hasil LSTM Gambar observasi
-    output:
-        Q_aux (Tensor)
-    """
-
-    def __init__(self, n_actions: int, hidden_size: int):
-        super(FeatureControl, self).__init__()
-        self.fc_layer = nn.Sequential(
-            nn.Linear(hidden_size, 32 * 9 * 9), nn.ReLU(inplace=True)
-        )
-        self.deconv_value = nn.ConvTranspose2d(32, 1, kernel_size=4, stride=2)
-        self.deconv_advantage = nn.ConvTranspose2d(
-            32, n_actions, kernel_size=4, stride=2
-        )
-
-    def forward(self, lstm_feature):
-        x = self.fc_layer(lstm_feature).view(-1, 32, 9, 9)
-        value = self.deconv_value(x)
-        advantage = self.deconv_advantage(x)
-        advantage_mean = advantage.mean(dim=1, keepdim=True)
-        q_aux = value + advantage - advantage_mean
-        return F.relu(q_aux)
-
-
 class RewardPrediction(nn.Module):
     """
     Modul reward predictions

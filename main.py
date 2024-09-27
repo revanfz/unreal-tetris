@@ -1,4 +1,5 @@
 import os
+
 os.environ["OMP_NUM_THREADS"] = "1"
 
 import torch
@@ -21,12 +22,16 @@ def get_args():
             UNTUK MENGHASILKAN AGEN CERDAS (STUDI KASUS: PERMAINAN TETRIS)
         """
     )
-    parser.add_argument("--lr", type=float, default=0.00103, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=0.00029, help="Learning rate")
     parser.add_argument(
-        "--gamma", type=float, default=0.99, help="discount factor for rewards"
+        "--gamma", type=float, default=0.94257, help="discount factor for rewards"
     )
-    parser.add_argument("--beta", type=float, default=0.00271, help="entropy coefficient")
-    parser.add_argument("--task-weight", type=float, default=0.01336, help="task weight")
+    parser.add_argument(
+        "--beta", type=float, default=0.00067, help="entropy coefficient"
+    )
+    parser.add_argument(
+        "--task-weight", type=float, default=0.09855, help="task weight"
+    )
     parser.add_argument(
         "--optimizer",
         type=str,
@@ -42,11 +47,11 @@ def get_args():
     parser.add_argument(
         "--save-interval",
         type=int,
-        default=1e3,
+        default=5e3,
         help="jumlah episode sebelum menyimpan checkpoint model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=15e6, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=40e6, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
@@ -72,7 +77,7 @@ def get_args():
     parser.add_argument(
         "--resume-training",
         type=bool,
-        default=False,
+        default=True,
         help="Load weight from previous trained stage",
     )
     args = parser.parse_args()
@@ -83,7 +88,7 @@ def train(params: argparse.Namespace) -> None:
     try:
         device = torch.device("cpu")
         manual_seed(42)
-        
+
         env = make_env(grayscale=False, framestack=None, resize=None)
 
         global_model = UNREAL(
@@ -92,7 +97,7 @@ def train(params: argparse.Namespace) -> None:
             device=torch.device("cpu"),
             hidden_size=params.hidden_size,
             beta=params.beta,
-            gamma=params.gamma
+            gamma=params.gamma,
         )
 
         if opt.optimizer == "adam":
@@ -127,7 +132,14 @@ def train(params: argparse.Namespace) -> None:
         optimizer.share_memory()
 
         progress_process = mp.Process(
-            target=update_progress, args=(global_steps, opt.max_steps)
+            target=update_progress,
+            args=(
+                (
+                    opt.max_steps - global_steps.value
+                    if global_steps.value > 0
+                    else global_steps.value
+                ),
+            ),
         )
         progress_process.start()
         processes.append(progress_process)
@@ -142,7 +154,7 @@ def train(params: argparse.Namespace) -> None:
                     global_steps,
                     global_episodes,
                     params,
-                    device
+                    device,
                 ),
             )
             process.start()
@@ -154,7 +166,7 @@ def train(params: argparse.Namespace) -> None:
     except (KeyboardInterrupt, mp.ProcessError) as e:
         print("Multiprocessing dihentikan...")
         raise KeyboardInterrupt(f"Program dihentikan")
-    
+
     except Exception as e:
         raise Exception(f"{e}")
 

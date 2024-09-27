@@ -35,7 +35,7 @@ def preprocessing(state: np.ndarray, pixel_control: bool = False) -> Tensor:
     return obs
 
 def make_env(
-    id: str = "TetrisA-v2",
+    id: str = "TetrisA-v3",
     grayscale: bool = True,
     resize: int = 0,
     render_mode="rgb_array",
@@ -72,14 +72,14 @@ def ensure_share_grads(
             global_param._grad = local_param.grad
 
 
-def update_progress(global_steps: Synchronized, max_steps: float, desc=None, unit=None):
+def update_progress(max_steps: float, global_steps: int = 0, desc=None, unit=None):
     pbar = tqdm(
         total=max_steps,
         desc="Total Steps" if not desc else desc,
         unit="step" if not unit else unit,
     )
-    while global_steps.value < max_steps:
-        pbar.n = global_steps.value
+    while global_steps < max_steps:
+        pbar.n = global_steps
         pbar.refresh()
         time.sleep(0.1)
     pbar.close()

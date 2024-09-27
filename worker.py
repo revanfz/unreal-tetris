@@ -30,12 +30,14 @@ def worker(
             grayscale=False, framestack=None, resize=None, render_mode=render_mode
         )
 
-        device = torch.device("cpu")
+        device = torch.device("cuda")
         local_model = UNREAL(
             n_inputs=(84, 84, 3),
             n_actions=env.action_space.n,
             hidden_size=256,
             device=device,
+            beta=params.beta,
+            gamma=params.gamma
         )
         local_model.train()
         
@@ -58,6 +60,7 @@ def worker(
         while global_steps.value <= params.max_steps:
             optimizer.zero_grad()
             local_model.load_state_dict(global_model.state_dict())
+            prev_lines = 0
 
             for _ in range(params.unroll_steps):
                 if done:
@@ -81,7 +84,9 @@ def worker(
                 action = dist.sample().detach()
 
                 next_state, reward, done, _, info = env.step(action.item())
-                # reward += 10 ** info["number_of_lines"]
+                if info["number_of_lines"] > prev_lines:
+                    reward += 10 * (info["number_of_lines"] - prev_lines)
+                    prev_lines = info["number_of_lines"]
                 next_state = preprocessing(next_state)
 
                 experience_replay.store(
@@ -177,10 +182,10 @@ def worker(
                     "Entropy", entropy.mean().item(), global_episodes.value
                 )
 
-                for name, param in global_model.named_parameters():
-                    writer.add_histogram(f"weights/{name}", param.data.cpu().numpy(), global_episodes.value)
-                    if param.grad is not None:
-                        writer.add_histogram(f"grads/{name}", param.grad.cpu().numpy(), global_episodes.value)
+                # for name, param in global_model.named_parameters():
+                #     writer.add_histogram(f"weights/{name}", param.data.cpu().numpy(), global_episodes.value)
+                #     if param.grad is not None:
+                #         writer.add_histogram(f"grads/{name}", param.grad.cpu().numpy(), global_episodes.value)
 
                 if current_episodes % 100 == 0:
                     writer.flush()
