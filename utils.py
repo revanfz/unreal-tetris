@@ -5,10 +5,11 @@ import numpy as np
 
 from tqdm import tqdm
 from torch import device
-from gym.wrappers import (
+from gymnasium.wrappers import (
     FrameStack,
     ResizeObservation,
     GrayScaleObservation,
+    NormalizeObservation,
 )
 
 from torch import Tensor, float32
@@ -27,8 +28,8 @@ def preprocessing(state: np.ndarray, pixel_control: bool = False) -> Tensor:
             [
                 v2.ToImage(),
                 v2.ToDtype(float32, scale=True),
-                v2.Lambda(lambda x: v2.functional.crop(x, 48, 96, 160, 80)),
-                v2.Resize((84, 84))
+                # v2.Lambda(lambda x: v2.functional.crop(x, 48, 96, 160, 80)),
+                # v2.Resize((84, 84))
             ]
         )
         obs = preprocess(state.copy()).numpy()
@@ -36,14 +37,13 @@ def preprocessing(state: np.ndarray, pixel_control: bool = False) -> Tensor:
 
 def make_env(
     id: str = "TetrisA-v3",
-    grayscale: bool = True,
+    grayscale: bool = False,
     resize: int = 0,
     render_mode="rgb_array",
     framestack: int = 4,
+    normalize = False,
 ):
-    env = gym_tetris.make(id, apply_api_compatibility=True, render_mode=render_mode)
-    env.metadata["render_modes"] = ["rgb_array", "human"]
-    env.metadata["render_fps"] = 60
+    env = gym_tetris.make(id, render_mode=render_mode)
     env = JoypadSpace(env, MOVEMENT)
     if grayscale:
         env = GrayScaleObservation(env, keep_dim=True)
@@ -51,7 +51,9 @@ def make_env(
         env = ResizeObservation(env, resize)
     if framestack:
         env = FrameStack(env, framestack)
-    env = FrameSkipWrapper(env)
+    if normalize:
+        env = NormalizeObservation(env)
+    env = FrameSkipWrapper(env, 2)
 
     return env
 
@@ -72,14 +74,14 @@ def ensure_share_grads(
             global_param._grad = local_param.grad
 
 
-def update_progress(max_steps: float, global_steps: int = 0, desc=None, unit=None):
+def update_progress(global_steps: Synchronized, max_steps: float, checkpoint_steps = 0, desc=None, unit=None):
     pbar = tqdm(
         total=max_steps,
         desc="Total Steps" if not desc else desc,
         unit="step" if not unit else unit,
     )
-    while global_steps < max_steps:
-        pbar.n = global_steps
+    while global_steps.value - checkpoint_steps < max_steps:
+        pbar.n = global_steps.value - checkpoint_steps
         pbar.refresh()
         time.sleep(0.1)
     pbar.close()

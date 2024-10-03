@@ -5,13 +5,18 @@ class FrameSkipWrapper(gym.Wrapper):
         super().__init__(env)
         self.skip = skip
 
-    def step(self, action):
+    def step(self, action, last_info = None):
         done = False
         info = {}
         total_reward = 0.0
         for _ in range(self.skip):
             obs, reward, done, _, info = self.env.step(action)
+            if last_info:
+                if info["number_of_lines"] > last_info["number_of_lines"]:
+                    reward += 10 * (info["number_of_lines"] - last_info["number_of_lines"])
             total_reward += reward
+            last_info = info
             if done:
+                total_reward -= 5
                 break
         return obs, total_reward, done, False, info

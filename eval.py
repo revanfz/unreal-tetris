@@ -33,6 +33,13 @@ if __name__ == "__main__":
             weights_only=True,
         ),
     )
+    # checkpoint = torch.load(
+    #     "trained_models/a3c_checkpoint.tar",
+    #     weights_only=True
+    # )
+    # model.load_state_dict(
+    #     checkpoint["model_state_dict"]
+    # )
     model.eval()
 
     done = True

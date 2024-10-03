@@ -7,6 +7,7 @@ import shutil
 import argparse
 import torch.multiprocessing as mp
 
+from pprint import pp
 from model import UNREAL
 from worker import worker
 from torch import manual_seed, load
@@ -51,7 +52,7 @@ def get_args():
         help="jumlah episode sebelum menyimpan checkpoint model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=40e6, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=2e7, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
@@ -77,7 +78,7 @@ def get_args():
     parser.add_argument(
         "--resume-training",
         type=bool,
-        default=True,
+        default=False,
         help="Load weight from previous trained stage",
     )
     args = parser.parse_args()
@@ -89,12 +90,12 @@ def train(params: argparse.Namespace) -> None:
         device = torch.device("cpu")
         manual_seed(42)
 
-        env = make_env(grayscale=False, framestack=None, resize=None)
+        env = make_env(grayscale=False, framestack=None, resize=84)
 
         global_model = UNREAL(
             n_inputs=(84, 84, 3),
             n_actions=env.action_space.n,
-            device=torch.device("cpu"),
+            device=device,
             hidden_size=params.hidden_size,
             beta=params.beta,
             gamma=params.gamma,
@@ -111,6 +112,7 @@ def train(params: argparse.Namespace) -> None:
 
         if opt.resume_training:
             if os.path.isdir(opt.model_path):
+                load_model = True
                 file_ = f"{opt.model_path}/a3c_checkpoint.tar"
                 if os.path.isfile(file_):
                     checkpoint = load(file_, weights_only=True)
@@ -127,19 +129,25 @@ def train(params: argparse.Namespace) -> None:
                 print("Membuat direktori model...")
                 os.makedirs(opt.model_path)
                 print("Memulai training...")
+        else:
+            load_model = False
+
 
         global_model.train()
         optimizer.share_memory()
-
+        pp(opt)
         progress_process = mp.Process(
             target=update_progress,
             args=(
+                global_steps,
                 (
                     opt.max_steps - global_steps.value
-                    if global_steps.value > 0
-                    else global_steps.value
+                    if load_model
+                    else opt.max_steps
                 ),
+                checkpoint["steps"] if load_model else 0
             ),
+            kwargs=({"desc": "Resuming Training. Total Steps" if load_model else "Total Steps"})
         )
         progress_process.start()
         processes.append(progress_process)

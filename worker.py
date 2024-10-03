@@ -27,10 +27,10 @@ def worker(
 
         render_mode = "human" if not rank else "rgb_array"
         env = make_env(
-            grayscale=False, framestack=None, resize=None, render_mode=render_mode
+            grayscale=False, framestack=None, resize=84, render_mode=render_mode
         )
 
-        device = torch.device("cuda")
+        device = torch.device("cpu")
         local_model = UNREAL(
             n_inputs=(84, 84, 3),
             n_actions=env.action_space.n,
@@ -44,12 +44,12 @@ def worker(
         if not rank:
             writer = SummaryWriter(f"{params.log_path}/a3c-tetris")
             writer.add_graph(local_model, (
-                torch.zeros(1, 3, 84, 84),
-                torch.zeros(1, env.action_space.n),
-                torch.zeros(1, 1),
+                torch.zeros(1, 3, 84, 84).to(device),
+                torch.zeros(1, env.action_space.n).to(device),
+                torch.zeros(1, 1).to(device),
                 (
-                    torch.zeros(1, params.hidden_size),
-                    torch.zeros(1, params.hidden_size)
+                    torch.zeros(1, params.hidden_size).to(device),
+                    torch.zeros(1, params.hidden_size).to(device)
                 ),
             ))
         experience_replay = ReplayBuffer(2000)
@@ -60,7 +60,6 @@ def worker(
         while global_steps.value <= params.max_steps:
             optimizer.zero_grad()
             local_model.load_state_dict(global_model.state_dict())
-            prev_lines = 0
 
             for _ in range(params.unroll_steps):
                 if done:
@@ -83,10 +82,7 @@ def worker(
                 dist = Categorical(policy)
                 action = dist.sample().detach()
 
-                next_state, reward, done, _, info = env.step(action.item())
-                if info["number_of_lines"] > prev_lines:
-                    reward += 10 * (info["number_of_lines"] - prev_lines)
-                    prev_lines = info["number_of_lines"]
+                next_state, reward, done, _, info = env.step(action.item(), info)
                 next_state = preprocessing(next_state)
 
                 experience_replay.store(

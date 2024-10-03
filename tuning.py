@@ -42,17 +42,16 @@ def train(
     trial: optuna.Trial,
 ) -> None:
     try:
-        device = torch.device("cuda")
+        device = torch.device("cpu")
 
         torch.manual_seed(42 + rank)
-        env = make_env(resize=84, grayscale=False, framestack=None)
+        env = make_env(resize=None, grayscale=False, framestack=None)
 
         local_model = UNREAL(
             n_inputs=(84, 84, 3),
             n_actions=env.action_space.n,
             hidden_size=params["hidden_size"],
             beta=params["beta"],
-            gamma=params["gamma"],
             device=device,
         )
         local_model.train()
@@ -75,7 +74,7 @@ def train(
                     prev_reward = torch.zeros(1, 1).to(device)
                     hx = torch.zeros(1, params["hidden_size"]).to(device)
                     cx = torch.zeros(1, params["hidden_size"]).to(device)
-
+                    prev_lines = 0
                     if not rank and num_games:
                         trial.report(global_rewards.value, step=num_games)
                         
@@ -93,7 +92,9 @@ def train(
                 action = dist.sample().detach()
 
                 next_state, reward, done, _, info = env.step(action.item())
-                reward += 10 ** info["current_lines"]
+                if info["number_of_lines"] > prev_lines:
+                    reward += 10 * (info["number_of_lines"] - prev_lines)
+                    prev_lines = info["number_of_lines"]
                 with global_rewards.get_lock():
                     global_rewards.value += reward
                 next_state = preprocessing(next_state)
@@ -276,7 +277,7 @@ if __name__ == "__main__":
             engine_kwargs={"connect_args": {"timeout": 30}},
         )
         study = optuna.create_study(
-            study_name="final-tuning",
+            study_name="final",
             storage=storage,
             load_if_exists=True,
             directions=["maximize"]

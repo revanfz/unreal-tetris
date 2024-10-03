@@ -4,9 +4,8 @@ import numpy as np
 import torch.nn as nn
 import matplotlib.pyplot as plt
 
-from torch import Tensor, float32, FloatTensor
 from torchvision.transforms import v2
-from torchvision.utils import save_image
+from torch import Tensor, float32, FloatTensor
 
 from utils import make_env
 
@@ -15,8 +14,8 @@ def preprocessing(state: np.ndarray) -> Tensor:
         [
             v2.ToImage(),
             v2.ToDtype(float32, scale=True),
-            v2.Lambda(lambda x: v2.functional.crop(x, 48, 96, 160, 80)),
-            v2.Resize((84, 84))
+            # v2.Lambda(lambda x: v2.functional.crop(x, 48, 96, 160, 80)),
+            # v2.Resize((84, 84))
         ]
     )
     return preprocess(state)
@@ -105,13 +104,23 @@ def plot_observation(observation):
 
 # Contoh penggunaan
 
-env = make_env(grayscale=False, resize=None, normalize=True, framestack=None)
+env = make_env(grayscale=False, resize=84, framestack=None)
 env.reset()
 model = SimpleConvNet(input_channels=env.observation_space.shape[-1])
 
 for i in range(4):
     action = env.action_space.sample()
     state, reward, done, _, info = env.step(action)
+
+    # Plot menggunakan matplotlib
+    plt.imshow(state, cmap='gray')  # Gunakan 'gray' untuk gambar grayscale
+    plt.axis('off')  # Untuk menghilangkan sumbu (opsional)
+    plt.show()
+    state = preprocessing(state).unsqueeze(0)
+
+    # Plot gambar observasi
+    visualize_conv_output(model, state)
+
     if done:
         break
 
@@ -121,10 +130,12 @@ for i in range(4):
 # img_arr = np.array(img)
 # state = torch.FloatTensor(preprocess_frame_stack(img_arr)).unsqueeze(0)
 # state = pixel_control(state)
-state = FloatTensor(state)
-print(state.shape)
-state = preprocessing(FloatTensor(state).permute(2, 0, 1)).unsqueeze(0)
-print(state.shape)
 
-# Plot gambar observasi
-visualize_conv_output(model, state)
+# # Plot menggunakan matplotlib
+# plt.imshow(state, cmap='gray')  # Gunakan 'gray' untuk gambar grayscale
+# plt.axis('off')  # Untuk menghilangkan sumbu (opsional)
+# plt.show()
+# state = preprocessing(state.copy()).unsqueeze(0)
+
+# # Plot gambar observasi
+# visualize_conv_output(model, state)

@@ -170,7 +170,7 @@ class UNREAL(nn.Module):
         device: torch.device,
         hidden_size=256,
         beta=0.01,
-        gamma=0.9,
+        gamma=0.99,
     ):
         super(UNREAL, self).__init__()
         self.beta = beta

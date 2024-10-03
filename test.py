@@ -20,7 +20,7 @@ params = dict(
 device = torch.device("cpu")
 
 if __name__ == "__main__":
-    env = make_env(resize=None, grayscale=False, framestack=None, render_mode="human")
+    env = make_env(resize=84, grayscale=False, framestack=None, render_mode="human")
 
     global_model = UNREAL(
         n_inputs=(84, 84, 3),
