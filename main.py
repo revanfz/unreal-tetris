@@ -78,7 +78,7 @@ def get_args():
     parser.add_argument(
         "--resume-training",
         type=bool,
-        default=False,
+        default=True,
         help="Load weight from previous trained stage",
     )
     args = parser.parse_args()

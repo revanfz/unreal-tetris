@@ -15,7 +15,7 @@ params = dict(
 
 if __name__ == "__main__":
     env = make_env(
-        grayscale=False, framestack=None, resize=None, render_mode="human"
+        grayscale=False, framestack=None, resize=84, record=True, render_mode="human"
     )
     device = torch.device("cpu")
 
@@ -33,13 +33,6 @@ if __name__ == "__main__":
             weights_only=True,
         ),
     )
-    # checkpoint = torch.load(
-    #     "trained_models/a3c_checkpoint.tar",
-    #     weights_only=True
-    # )
-    # model.load_state_dict(
-    #     checkpoint["model_state_dict"]
-    # )
     model.eval()
 
     done = True

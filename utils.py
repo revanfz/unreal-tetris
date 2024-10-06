@@ -10,6 +10,7 @@ from gymnasium.wrappers import (
     ResizeObservation,
     GrayScaleObservation,
     NormalizeObservation,
+    RecordEpisodeStatistics
 )
 
 from torch import Tensor, float32
@@ -42,6 +43,7 @@ def make_env(
     render_mode="rgb_array",
     framestack: int = 4,
     normalize = False,
+    record = False
 ):
     env = gym_tetris.make(id, render_mode=render_mode)
     env = JoypadSpace(env, MOVEMENT)
@@ -53,6 +55,8 @@ def make_env(
         env = FrameStack(env, framestack)
     if normalize:
         env = NormalizeObservation(env)
+    if record:
+        env = RecordEpisodeStatistics(env, deque_size=300)
     env = FrameSkipWrapper(env, 2)
 
     return env
