@@ -14,7 +14,7 @@ from gymnasium.wrappers import (
 )
 
 from torch import Tensor, float32
-from wrapper import FrameSkipWrapper
+from wrapper import FrameSkipWrapper, RecordVideo
 from torchvision.transforms import v2
 from nes_py.wrappers import JoypadSpace
 from gym_tetris.actions import MOVEMENT
@@ -41,12 +41,22 @@ def make_env(
     grayscale: bool = False,
     resize: int = 0,
     render_mode="rgb_array",
-    framestack: int = 4,
+    framestack: int | None = None,
     normalize = False,
-    record = False
+    record = False,
+    path: str | None = "./videos",
+    format: str | None = "gif",
+    level: int | None = 0, 
 ):
-    env = gym_tetris.make(id, render_mode=render_mode)
+    make_params = {
+        "render_mode": "rgb_array" if record else render_mode
+    }
+    if level is not None:
+        make_params["level"] = level
+
+    env = gym_tetris.make(id, **make_params)
     env = JoypadSpace(env, MOVEMENT)
+
     if grayscale:
         env = GrayScaleObservation(env, keep_dim=True)
     if resize:
@@ -57,6 +67,8 @@ def make_env(
         env = NormalizeObservation(env)
     if record:
         env = RecordEpisodeStatistics(env, deque_size=300)
+        env = RecordVideo(env, path, format)
+
     env = FrameSkipWrapper(env, 2)
 
     return env
