@@ -1,5 +1,7 @@
+from pprint import pp
 import torch
 import torch.nn as nn
+import matplotlib.pyplot as plt
 import torch.nn.functional as F
 
 from model import UNREAL
@@ -20,7 +22,7 @@ params = dict(
 device = torch.device("cpu")
 
 if __name__ == "__main__":
-    env = make_env(resize=84, grayscale=False, framestack=None, render_mode="human")
+    env = make_env(resize=84, render_mode="human", level=9)
 
     global_model = UNREAL(
         n_inputs=(84, 84, 3),
@@ -72,10 +74,13 @@ if __name__ == "__main__":
             )
 
             dist = Categorical(policy)
-            action = dist.sample().detach()
+            # action = dist.sample().detach()
+            action = policy.cpu().argmax().unsqueeze(0)
 
-            next_state, reward, done, _, info = env.step(9)
-            print(info)
+            next_state, reward, done, _, info = env.step(action.item())
+            plt.imshow(next_state)
+            plt.show()
+            pp([info, action.item()])
             episode_blocks = sum(info["statistics"].values())
             next_state = preprocessing(next_state)
             episode_reward += reward

@@ -3,12 +3,14 @@ import gymnasium as gym
 
 from gymnasium import error
 from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
+from moviepy.video.fx.resize import resize
 
 
 class FrameSkipWrapper(gym.Wrapper):
     def __init__(self, env, skip=4):
         super().__init__(env)
         self.skip = skip
+        self.env = env
 
     def step(self, action, last_info = None):
         done = False
@@ -51,7 +53,7 @@ class RecordVideo(gym.Wrapper):
         if len(self.frame_captured) > 0:
             if self.format in ["mp4", "avi", "webm", "ogv", "gif"]:
                 filename = "{}/{}.{}".format(self.path, self.episode, self.format)
-                clip = ImageSequenceClip(self.frame_captured, fps=self.env.metadata.get("fps", 60))
+                clip = ImageSequenceClip(self.frame_captured, fps=self.env.metadata.get("fps", 60)).fx(resize, width=480)
                 if self.format == "gif":
                     clip.write_gif(filename)
                 else:

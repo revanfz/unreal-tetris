@@ -64,6 +64,7 @@ def worker(
             for _ in range(params.unroll_steps):
                 if done:
                     state, info = env.reset()
+                    last_info = info
                     state = preprocessing(state)
                     prev_action = torch.zeros(1, env.action_space.n).to(device)
                     prev_reward = torch.zeros(1, 1).to(device)
@@ -78,11 +79,17 @@ def worker(
                 policy, _, _, hx, cx = local_model(
                     state_tensor, prev_action, prev_reward, (hx, cx)
                 )
-
+        
                 dist = Categorical(policy)
                 action = dist.sample().detach()
 
                 next_state, reward, done, _, info = env.step(action.item(), info)
+                if last_info:
+                    if info["number_of_lines"] > last_info["number_of_lines"]:
+                        reward += 10 * (info["number_of_lines"] - last_info["number_of_lines"])
+                last_info = info
+                if done:
+                    reward -= 5
                 next_state = preprocessing(next_state)
 
                 experience_replay.store(

@@ -6,15 +6,17 @@ import numpy as np
 from tqdm import tqdm
 from torch import device
 from gymnasium.wrappers import (
-    FrameStack,
     ResizeObservation,
-    GrayScaleObservation,
+    GrayscaleObservation,
     NormalizeObservation,
-    RecordEpisodeStatistics
+    FrameStackObservation,
+    MaxAndSkipObservation,
+    RecordEpisodeStatistics,
 )
 
 from torch import Tensor, float32
-from wrapper import FrameSkipWrapper, RecordVideo
+from wrapper import RecordVideo
+# from wrapper import FrameSkipWrapper, RecordVideo
 from torchvision.transforms import v2
 from nes_py.wrappers import JoypadSpace
 from gym_tetris.actions import MOVEMENT
@@ -46,7 +48,8 @@ def make_env(
     record = False,
     path: str | None = "./videos",
     format: str | None = "gif",
-    level: int | None = 0, 
+    level: int | None = 0,
+    num_games: int | None = None
 ):
     make_params = {
         "render_mode": "rgb_array" if record else render_mode
@@ -56,20 +59,23 @@ def make_env(
 
     env = gym_tetris.make(id, **make_params)
     env = JoypadSpace(env, MOVEMENT)
+    env = MaxAndSkipObservation(env, skip=2)
 
     if grayscale:
-        env = GrayScaleObservation(env, keep_dim=True)
+        env = GrayscaleObservation(env, keep_dim=True)
     if resize:
-        env = ResizeObservation(env, resize)
+        env = ResizeObservation(env, (resize, resize))
     if framestack:
-        env = FrameStack(env, framestack)
+        env = FrameStackObservation(env, framestack)
     if normalize:
         env = NormalizeObservation(env)
     if record:
-        env = RecordEpisodeStatistics(env, deque_size=300)
         env = RecordVideo(env, path, format)
+        env = RecordEpisodeStatistics(env, buffer_length=num_games)
+    # else:
+        # env = FrameSkipWrapper(env, 2)
 
-    env = FrameSkipWrapper(env, 2)
+
 
     return env
 
