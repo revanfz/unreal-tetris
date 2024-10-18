@@ -40,7 +40,7 @@ def get_args():
 
 params = get_args()
 data_dir = "./tetris-agent/csv"
-video_path = f"./tetris-agent/videos/{params.test_case + 10}"
+video_path = f"./tetris-agent/videos/{params.test_case}"
 
 if __name__ == "__main__":
     if not os.path.isdir(data_dir):
