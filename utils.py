@@ -39,7 +39,7 @@ def preprocessing(state: np.ndarray, pixel_control: bool = False) -> Tensor:
     return obs
 
 def make_env(
-    id: str = "TetrisA-v3",
+    id: str = "TetrisA-v2",
     grayscale: bool = False,
     resize: int = 0,
     render_mode="rgb_array",
@@ -107,3 +107,12 @@ def update_progress(global_steps: Synchronized, max_steps: float, checkpoint_ste
         pbar.refresh()
         time.sleep(0.1)
     pbar.close()
+
+
+def pixel_diff(state, new_state, cell_size=4):
+    diff = np.abs(new_state[:, 2:-2, 2:-2] - state[:, 2:-2, 2:-2])
+    m = np.mean(diff, 0)
+    region = m.shape[0] // cell_size, cell_size, m.shape[1] // cell_size, cell_size
+    pixel_change = m.reshape(region).mean(-1).mean(1)
+
+    return pixel_change

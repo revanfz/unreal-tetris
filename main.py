@@ -18,20 +18,20 @@ from optimizer import SharedAdam, SharedRMSprop
 def get_args():
     parser = argparse.ArgumentParser(
         """
-            Implementation model A3C: 
-            IMPLEMENTASI ALGORITMA ASYNCHRONOUS ADVANTAGE ACTOR-CRITIC (A3C)
+            Implementation model UNREAL: 
+            IMPLEMENTASI ARSITEKTUR UNSUPERVISED REINFORCEMENT WITH AUXILIARY LEARNING (UNREAL)
             UNTUK MENGHASILKAN AGEN CERDAS (STUDI KASUS: PERMAINAN TETRIS)
         """
     )
-    parser.add_argument("--lr", type=float, default=0.00029, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=0.0003, help="Learning rate")
     parser.add_argument(
-        "--gamma", type=float, default=0.94257, help="discount factor for rewards"
+        "--gamma", type=float, default=0.99, help="discount factor for rewards"
     )
     parser.add_argument(
-        "--beta", type=float, default=0.00067, help="entropy coefficient"
+        "--beta", type=float, default=0.01, help="entropy coefficient"
     )
     parser.add_argument(
-        "--task-weight", type=float, default=0.09855, help="task weight"
+        "--task-weight", type=float, default=0.9, help="task weight"
     )
     parser.add_argument(
         "--optimizer",
@@ -78,7 +78,7 @@ def get_args():
     parser.add_argument(
         "--resume-training",
         type=bool,
-        default=True,
+        default=False,
         help="Load weight from previous trained stage",
     )
     args = parser.parse_args()
@@ -113,7 +113,7 @@ def train(params: argparse.Namespace) -> None:
         if opt.resume_training:
             if os.path.isdir(opt.model_path):
                 load_model = True
-                file_ = f"{opt.model_path}/a3c_checkpoint.tar"
+                file_ = f"{opt.model_path}/unreal_checkpoint.tar"
                 if os.path.isfile(file_):
                     checkpoint = load(file_, weights_only=True)
                     global_model.load_state_dict(checkpoint["model_state_dict"])
