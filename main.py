@@ -87,7 +87,7 @@ def get_args():
 
 def train(params: argparse.Namespace) -> None:
     try:
-        device = torch.device("cpu")
+        device = torch.device("cuda")
         manual_seed(42)
 
         env = make_env(grayscale=False, framestack=None, resize=84)
@@ -95,7 +95,7 @@ def train(params: argparse.Namespace) -> None:
         global_model = UNREAL(
             n_inputs=(84, 84, 3),
             n_actions=env.action_space.n,
-            device=device,
+            device=torch.device("cpu"),
             hidden_size=params.hidden_size,
             beta=params.beta,
             gamma=params.gamma,

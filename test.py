@@ -164,7 +164,9 @@ if __name__ == "__main__":
         )
         vr_loss = local_model.vr_loss(states, actions, rewards, dones)
 
-        total_loss = a3c_loss + 0.9 * pc_loss + rp_loss + vr_loss
+        print(f"A3C Loss = {a3c_loss}\t PC Loss = {pc_loss}\t VR Loss = {vr_loss}\t RP Loss = {rp_loss}\n" )
+
+        total_loss = a3c_loss + pc_loss + rp_loss + vr_loss
         print(total_loss)
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(local_model.parameters(), 40)

@@ -99,7 +99,6 @@ def worker(
                 reward = torch.zeros(1, 1).to(device)
                 hx = torch.zeros(1, params.hidden_size).to(device)
                 cx = torch.zeros(1, params.hidden_size).to(device)
-                episode_reward = 0
             else:
                 hx = hx.detach()
                 cx = cx.detach()
@@ -125,7 +124,6 @@ def worker(
                 )
                 state = next_state
 
-                episode_reward += reward
                 values.append(value)
                 log_probs.append(log_prob)
                 rewards.append(reward)
@@ -199,9 +197,11 @@ def worker(
             )
             vr_loss = local_model.vr_loss(states, actions, rewards, dones)
 
+            # print(f"A3C Loss = {a3c_loss}\t PC Loss = {pc_loss}\t VR Loss = {vr_loss}\t RP Loss = {rp_loss}\n" )
+
             # Penjumlahan loss a3c, pixel control, value replay dan reward prediction
             total_loss = (
-                a3c_loss + params.task_weight * pc_loss + rp_loss + vr_loss 
+                a3c_loss + pc_loss + rp_loss + vr_loss 
             )
 
             total_loss.backward()
@@ -213,7 +213,7 @@ def worker(
 
             if not rank:
                 writer.add_scalar(f"Losses", total_loss, global_episodes.value)
-                writer.add_scalar(f"Rewards", episode_reward, global_episodes.value)
+                writer.add_scalar(f"Rewards", sum(rewards), global_episodes.value)
                 writer.add_scalar(
                     f"Total lines cleared", total_lines, global_episodes.value
                 )

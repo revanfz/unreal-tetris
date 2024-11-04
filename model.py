@@ -236,9 +236,9 @@ class UNREAL(nn.Module):
         actions = torch.LongTensor(actions).to(self.device)
         actions_oh = F.one_hot(actions, self.n_actions)
         rewards = torch.FloatTensor(rewards).unsqueeze(1).to(self.device)
-        # pixel_changes = torch.FloatTensor(np.array(pixel_changes)).to(self.device)
+        pixel_changes = torch.FloatTensor(np.array(pixel_changes)).to(self.device)
 
-        R = np.zeros([20, 20], dtype=np.float32)
+        R = torch.zeros((20, 20), device=self.device)
         if not dones[-2]:
             with torch.no_grad():
                 conv_feat = self.conv_layer(states[-1].unsqueeze(0))
@@ -247,36 +247,38 @@ class UNREAL(nn.Module):
                     dim=1,
                 )
                 lstm_feat, _ = self.lstm_layer(lstm_input, None)
-                _, next_q = self.pc_layer(lstm_feat)
-                R = next_q.numpy()
+                _, R = self.pc_layer(lstm_feat)
 
-
+        returns = []
         for i in reversed(range(len(rewards[:-1]))):
-            R = pixel_changes[i] + self.gamma * R
+            R = pixel_changes[i] + 0.9 * R
+            returns.insert(0, R)
+        returns = torch.stack(returns).squeeze(1).to(self.device) # batch 20 20
 
-        returns = torch.from_numpy(R).squeeze(0).to(self.device)
         conv_feat = self.conv_layer(states[:-1])
         lstm_input = torch.cat([conv_feat, actions_oh[:-1], rewards[:-1]], dim=1)
         lstm_feat, _ = self.lstm_layer(lstm_input, None)
         q_aux, _ = self.pc_layer(lstm_feat)  # batch 12 20 20
 
         pc_a_reshape = actions_oh[:-1].view(-1, self.n_actions, 1, 1)  # batch 12 1 1
-        pc_qa_ = (q_aux * pc_a_reshape).sum(dim=1)  # batch 20 20
-        pc_qa = torch.sum(pc_qa_, dim=0)  # 20 20
-        pc_loss = F.mse_loss(pc_qa, returns)
+        q_taken = (q_aux * pc_a_reshape).sum(dim=1)  # batch 20 20
+        pc_loss = F.mse_loss(q_taken, returns)
         return pc_loss
 
     def rp_loss(self, states: np.ndarray, rewards: np.ndarray):
-        reward_class = [0.0, 0.0, 0.0]
-        if rewards[-1] == 0:
-            reward_class[0] = 1.0
-        elif rewards[-1] > 0:
-            reward_class[1] = 1.0
+        actual_reward = rewards[-1]
+        # 0 for zero reward
+        # 1 for positive reward
+        # 2 for negative reward
+        if actual_reward == 0:
+            reward_class = 0
+        elif actual_reward > 0:
+            reward_class = 1
         else:
-            reward_class[2] = 1.0
+            reward_class = 2
 
         states = torch.Tensor(np.array(states[:-1])).to(self.device)
-        reward_class = torch.Tensor(reward_class).to(self.device).unsqueeze(0)
+        reward_class = torch.tensor(reward_class, dtype=torch.long).unsqueeze(0).to(self.device)
 
         state_conv_feat = self.conv_layer(states).view(-1)
         reward_prediction = self.rp_layer(state_conv_feat)
@@ -305,11 +307,12 @@ class UNREAL(nn.Module):
                 _, R, _, _ = self.forward(state, action, reward)
                 R = R.cpu()
 
-        returns = torch.zeros(len(rewards) - 1)
+        returns = []
         for i in reversed(range(len(rewards[:-1]))):
             R = rewards[i] + self.gamma * R
-            returns[i] = R
+            returns.insert(0, R)
+        returns = torch.stack(returns).squeeze(1).to(self.device)
 
         _, values, _, _ = self.forward(states[:-1], actions_oh[:-1], rewards[:-1])
-        loss = F.mse_loss(values, returns.unsqueeze(1))
+        loss = F.mse_loss(values, returns)
         return loss
