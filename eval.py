@@ -32,7 +32,7 @@ def get_args():
         "--test-case", type=int, default=1, help="Nomor test case"
     )
     parser.add_argument(
-        "--num-tries", type=int, default=50, help="Jumlah permainan untuk dievaluasi"
+        "--num-tries", type=int, default=1, help="Jumlah permainan untuk dievaluasi"
     )
     args = parser.parse_args()
     return args
@@ -46,9 +46,11 @@ if __name__ == "__main__":
         os.makedirs(data_dir, exist_ok=True)
 
     env = make_env(
-        resize=84
+        resize=84,
+        level=19
     )
     device = torch.device("cpu")
+    checkpoint = torch.load("trained_models/unreal_checkpoint.tar", weights_only=True)
 
     model =  UNREAL(
         n_inputs=(84, 84, 3),
@@ -59,10 +61,12 @@ if __name__ == "__main__":
         gamma=params.gamma,
     )
     model.load_state_dict(
-        torch.load(
-            "trained_models/a3c_tetris.pt",
-            weights_only=True,
-        ),
+        # torch.load(
+        #     # "trained_models/a3c_tetris.pt",
+        #     "trained_models/unreal_checkpoint.tar",
+        #     weights_only=True,
+        # ),
+        checkpoint["model_state_dict"]
     )
     model.eval()
     del env
@@ -70,19 +74,20 @@ if __name__ == "__main__":
     test_case = params.test_case
     # while True:
     while test_case <= total_test_case:
-        video_path = f"./tetris-agent/videos/{test_case}"
+        # video_path = f"./tetris-agent/videos/{test_case}"
     
-        if not os.path.isdir(video_path):
-            os.makedirs(video_path, exist_ok=True)
-        if os.listdir(video_path):
-            raise Exception("Folder is not empty. Folder berisi hasil runs sebelumnya")
+        # if not os.path.isdir(video_path):
+        #     os.makedirs(video_path, exist_ok=True)
+        # if os.listdir(video_path):
+        #     raise Exception("Folder is not empty. Folder berisi hasil runs sebelumnya")
         
         env = make_env(
-            record=True,
+            # record=True,
             resize=84,
-            path=video_path,
+            # path=video_path,
             level = test_case,
-            num_games = params.num_tries
+            num_games = params.num_tries,
+            render_mode="human",
         )
 
         data = {
@@ -101,43 +106,43 @@ if __name__ == "__main__":
             if done:
                 state, info = env.reset()
                 state = preprocessing(state)
-                prev_action = torch.zeros(1, env.action_space.n).to(device)
-                prev_reward = torch.zeros(1, 1).to(device)
+                action = F.one_hot(torch.LongTensor([0]), num_classes=env.action_space.n).to(device)
+                reward = torch.zeros(1, 1).to(device)
                 hx = torch.zeros(1, 256).to(device)
                 cx = torch.zeros(1, 256).to(device)
             else:
-                hx = hx.data
-                cx = cx.data
+                hx = hx.detach()
+                cx = cx.detach()
 
-            with torch.no_grad():
-                state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
-                policy, _, _, hx, cx = model(
-                    state_tensor, prev_action, prev_reward, (hx, cx)
-                )
+            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
+            policy, _, hx, cx = model(
+                state_tensor, action, reward, (hx, cx)
+            )
 
-                action = policy.cpu().argmax().unsqueeze(0)
+            action = policy.cpu().argmax().unsqueeze(0)
+            print(action.item())
 
-                next_state, reward, done, _, info = env.step(action.item())
-                next_state = preprocessing(next_state)
-                prev_action = F.one_hot(action, num_classes=env.action_space.n).to(
-                    device
-                )
-                prev_reward = torch.FloatTensor([reward]).unsqueeze(0).to(device)
-                state = next_state
+            next_state, reward, done, _, info = env.step(action.item())
+            next_state = preprocessing(next_state)
+            action = F.one_hot(action, num_classes=env.action_space.n).to(
+                device
+            )
+            reward = torch.FloatTensor([reward]).unsqueeze(0).to(device)
+            state = next_state
 
             if done:
                 episode += 1
                 data["lines"].append(info['number_of_lines'])
                 data["block_placed"].append(sum(info["statistics"].values()))
                 data["score"].append(info['score'])
-                data["rewards"].append(info["episode"]["r"] + 10 * info["number_of_lines"] - 5)
+                # data["rewards"].append(info["episode"]["r"] + 10 * info["number_of_lines"] - 5)
             
         
-        data["episode_length"] = np.array(env.length_queue)
-        data["episode_time"] = np.array(env.time_queue)
-        del env
+        # data["episode_length"] = np.array(env.length_queue)
+        # data["episode_time"] = np.array(env.time_queue)
+        # del env
 
-        df = pd.DataFrame(data)
-        pp(df)
-        df.to_csv(f"{data_dir}/{test_case}.csv", index=False)
-        test_case += 1
+        # df = pd.DataFrame(data)
+        # pp(df)
+        # df.to_csv(f"{data_dir}/{test_case}.csv", index=False)
+        # test_case += 1

@@ -30,7 +30,7 @@ def worker(
             resize=84, render_mode=render_mode, level=19
         )
 
-        device = torch.device("cpu")
+        # device = torch.device("cuda")
         local_model = UNREAL(
             n_inputs=(84, 84, 3),
             n_actions=env.action_space.n,
@@ -60,11 +60,13 @@ def worker(
         state = preprocessing(state)
         prev_action = F.one_hot(torch.LongTensor([0]), env.action_space.n).to(device)
         prev_reward = torch.zeros(1, 1).to(device)
+        hx = torch.zeros(1, params.hidden_size).to(device)
+        cx = torch.zeros(1, params.hidden_size).to(device)
 
         while not experience_replay._is_full():
             with torch.no_grad():
-                state_tensor = torch.FloatTensor(state).unsqueeze(0)
-                policy, value, _, _ = local_model(
+                state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
+                policy, _, _, _ = local_model(
                     state_tensor, prev_action, prev_reward, None
                 )
                 probs = F.softmax(policy, dim=1)
@@ -80,9 +82,14 @@ def worker(
             prev_action = F.one_hot(action, num_classes=env.action_space.n).to(device)
             prev_reward = torch.FloatTensor([[reward]]).to(device)
 
+            hx = hx.detach()
+            cx = cx.detach()
+
             if done:
                 state, info = env.reset()
                 state = preprocessing(state)
+                hx = torch.zeros(1, params.hidden_size).to(device)
+                cx = torch.zeros(1, params.hidden_size).to(device)
 
         done = True
         current_episodes = 0
@@ -90,7 +97,7 @@ def worker(
         while global_steps.value <= params.max_steps:
             optimizer.zero_grad()
             local_model.load_state_dict(global_model.state_dict())
-            log_probs, entropies, rewards, values, dones = [], [], [], [], []
+            episode_length = 0
 
             if done:
                 state, info = env.reset()
@@ -111,10 +118,7 @@ def worker(
 
                 probs = F.softmax(policy, dim=1)
                 dist = Categorical(probs=probs)
-                action = dist.sample().detach()
-
-                log_prob = dist.log_prob(action)
-                entropy = dist.entropy()
+                action = dist.sample()
 
                 next_state, reward, done, _, info = env.step(action.item())
                 next_state = preprocessing(next_state)
@@ -124,16 +128,12 @@ def worker(
                 )
                 state = next_state
 
-                values.append(value)
-                log_probs.append(log_prob)
-                rewards.append(reward)
-                entropies.append(entropy)
-                dones.append(done)
-
                 action = F.one_hot(action, num_classes=env.action_space.n).to(
                     device
                 )
                 reward = torch.FloatTensor([[reward]]).to(device)
+
+                episode_length += 1
 
                 with global_steps.get_lock():
                     global_steps.value += 1
@@ -160,15 +160,14 @@ def worker(
                         reward,
                         (hx, cx),
                     )
-                R = R.cpu().detach()
 
             # Hitung loss A3C
-            a3c_loss = local_model.a3c_loss(
-                entropies=entropies,
+            states, rewards, actions, dones, pixel_change = experience_replay.sample(episode_length)
+            a3c_loss, entropy = local_model.a3c_loss(
+                states=states,
                 dones=dones,
-                log_probs=log_probs,
+                actions=actions,
                 rewards=rewards,
-                values=values,
                 R=R,
             )
 
@@ -201,7 +200,7 @@ def worker(
 
             # Penjumlahan loss a3c, pixel control, value replay dan reward prediction
             total_loss = (
-                a3c_loss + pc_loss + rp_loss + vr_loss 
+                a3c_loss + params.pc_weight * pc_loss + rp_loss + vr_loss 
             )
 
             total_loss.backward()

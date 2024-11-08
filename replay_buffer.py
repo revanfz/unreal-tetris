@@ -49,6 +49,15 @@ class ReplayBuffer:
             ):
                 self.rewarding_indices.popleft()
 
+    def sample(self, size):
+        start_pos = len(self.buffer) - size
+        sampled_frames = []
+        for i in range(size):
+            frame = self.buffer[start_pos + i]
+            sampled_frames.append(frame)
+
+        return map(list, zip(*sampled_frames))
+
     def sample_sequence(self, size):
         start_pos = np.random.randint(0, len(self.buffer) - size - 1)
         if self.buffer[start_pos][3]:

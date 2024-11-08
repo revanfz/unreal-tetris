@@ -19,7 +19,7 @@ from torch.distributions import Categorical
 from multiprocessing.synchronize import Event
 from optimizer import SharedAdam, SharedRMSprop
 from multiprocessing.sharedctypes import Synchronized
-from utils import ensure_share_grads, make_env, preprocessing
+from utils import ensure_share_grads, make_env, pixel_diff, preprocessing
 
 
 def print_best_trial(trials, index: int, metric_name: str):
@@ -37,121 +37,166 @@ def train(
     global_model: UNREAL,
     optimizer: Union[SharedAdam, SharedRMSprop],
     global_steps: Synchronized,
-    global_rewards: Synchronized,
+    global_scores: Synchronized,
+    global_blocks: Synchronized,
+    global_lines: Synchronized,
+    global_tries: Synchronized,
     stop_event: Event,
     trial: optuna.Trial,
 ) -> None:
     try:
-        device = torch.device("cpu")
+        device = torch.device("cuda")
 
         torch.manual_seed(42 + rank)
-        env = make_env(resize=None, grayscale=False, framestack=None)
+        env = make_env(resize=84, render_mode="rgb_array", level=19)
 
         local_model = UNREAL(
             n_inputs=(84, 84, 3),
             n_actions=env.action_space.n,
             hidden_size=params["hidden_size"],
             beta=params["beta"],
+            gamma=params["gamma"],
             device=device,
         )
         local_model.train()
-        experience_replay = ReplayBuffer(2000)
+        experience_replay = ReplayBuffer(500)
+
+        state, info = env.reset()
+        state = preprocessing(state)
+        action = F.one_hot(torch.LongTensor([0]), env.action_space.n).to(device)
+        reward = torch.zeros(1, 1).to(device)
+
+        while not experience_replay._is_full():
+            with torch.no_grad():
+                state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
+                policy, value, _, _ = local_model(
+                    state_tensor, action, reward, None
+                )
+                probs = F.softmax(policy, dim=1)
+                dist = Categorical(probs=probs)
+                action = dist.sample().cpu()
+
+            next_state, reward, done, _, info = env.step(action.item())
+            next_state = preprocessing(next_state)
+            pixel_change = pixel_diff(state, next_state)
+            experience_replay.store(state, reward, action.item(), done, pixel_change)
+            state = next_state
+            action = F.one_hot(action, num_classes=env.action_space.n).to(device)
+            reward = torch.FloatTensor([[reward]]).to(device)
+
+            if done:
+                state, info = env.reset()
+                state = preprocessing(state)
 
         done = True
-        num_games = 0
 
         while not stop_event.is_set():
             optimizer.zero_grad()
             local_model.load_state_dict(global_model.state_dict())
+            eps_length = 0
+
+            if done:
+                state, info = env.reset()
+                state = preprocessing(state)
+                action = F.one_hot(torch.LongTensor([0]), num_classes=env.action_space.n).to(device)
+                reward = torch.zeros(1, 1).to(device)
+                hx = torch.zeros(1, params["hidden_size"]).to(device)
+                cx = torch.zeros(1, params["hidden_size"]).to(device)
+            else:
+                hx = hx.detach()
+                cx = cx.detach()
 
             for _ in range(params["unroll_steps"]):
                 with global_steps.get_lock():
                     global_steps.value += 1
-                if done:
-                    state, info = env.reset()
-                    state = preprocessing(state)
-                    prev_action = torch.zeros(1, env.action_space.n).to(device)
-                    prev_reward = torch.zeros(1, 1).to(device)
-                    hx = torch.zeros(1, params["hidden_size"]).to(device)
-                    cx = torch.zeros(1, params["hidden_size"]).to(device)
-                    prev_lines = 0
-                    if not rank and num_games:
-                        trial.report(global_rewards.value, step=num_games)
-                        
-                    num_games += 1
-                else:
-                    hx = hx.data
-                    cx = cx.data
 
-                state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
-                policy, _, _, hx, cx = local_model(
-                    state_tensor, prev_action, prev_reward, (hx, cx)
-                )
+                state_tensor = torch.from_numpy(state).unsqueeze(0).to(device)
+                policy, value, hx, cx = local_model(state_tensor, action, reward, (hx, cx))
 
-                dist = Categorical(policy)
-                action = dist.sample().detach()
+                probs = F.softmax(policy, dim=1)
+                dist = Categorical(probs)
+                action = dist.sample()
 
                 next_state, reward, done, _, info = env.step(action.item())
-                if info["number_of_lines"] > prev_lines:
-                    reward += 10 * (info["number_of_lines"] - prev_lines)
-                    prev_lines = info["number_of_lines"]
-                with global_rewards.get_lock():
-                    global_rewards.value += reward
                 next_state = preprocessing(next_state)
-
-                experience_replay.store(
-                    state,
-                    prev_action.argmax().item(),
-                    prev_reward.item(),
-                    next_state,
-                    action.item(),
-                    reward,
-                    done,
-                )
-
-                prev_action = F.one_hot(action, num_classes=env.action_space.n).to(
-                    device
-                )
-                prev_reward = torch.FloatTensor([reward]).unsqueeze(0).to(device)
+                pixel_change = pixel_diff(state, next_state)
+                experience_replay.store(state, reward, action.item(), done, pixel_change)
                 state = next_state
 
+                action = F.one_hot(action, num_classes=env.action_space.n).to(device)
+                reward = torch.FloatTensor([[reward]]).to(device)
+
+                eps_length += 1
+
+                if done:
+                    with global_scores.get_lock():
+                        global_scores.value += info["score"]
+
+                    with global_blocks.get_lock():
+                        global_blocks.value += sum(info["statistics"].values())
+
+                    with global_lines.get_lock():
+                        global_lines.value += info["number_of_lines"]
+
+                    with global_tries.get_lock():
+                        global_tries.value += 1
+                    break
+
+             # Bootstrapping
+            R = 0.0
+            if not done:
+                with torch.no_grad():
+                    _, R, _, _ = local_model(
+                        torch.FloatTensor(next_state).unsqueeze(0).to(device),
+                        action,
+                        reward,
+                        (hx, cx),
+                    )
+
             # Hitung loss A3C
-            # 1. Sampel replay buffer secara sekuensial
-            states, prev_actions, prev_rewards, _, _, _, dones = experience_replay.sample(
-                params["unroll_steps"], base=True
+            states, rewards, actions, dones, pixel_change = experience_replay.sample(eps_length)
+            a3c_loss, entropy = local_model.a3c_loss(
+                states=states,
+                dones=dones,
+                actions=actions,
+                rewards=rewards,
+                R=R,
             )
-            # 2. Hitung loss actor dan critic
-            policy_loss, value_loss, _ = local_model.a3c_loss(
-                states, prev_rewards, prev_actions, dones
-            )
-            # 3. Jumlahkan loss dengan mengurangi nilai critic loss
-            a3c_loss = policy_loss + value_loss
 
-            # Hitung Loss Pixel Control dan Feature Control
+            # Hitung Loss Pixel Control
             # 1.  Sampling replay buffer secara random
-            states, prev_actions, prev_rewards, next_states, next_actions, next_rewards, dones = experience_replay.sample(
-                params["unroll_steps"]
+            states, rewards, actions, dones, pixel_changes = (
+                experience_replay.sample_sequence(params["unroll_steps"] + 1)
             )
-            # 2a. Hitung loss Pixel Control
-            aux_control_loss = local_model.control_loss(
-                states, prev_actions, prev_rewards, next_states, next_actions, next_rewards, dones
-            )  
-            # 2b. Hitung loss Value Replay
-            vr_loss = local_model.vr_loss(states, prev_actions, prev_rewards, dones)
+            # 2. Hitung loss Pixel Control
+            pc_loss = local_model.control_loss(
+                states, rewards, actions, dones, pixel_changes
+            )
 
-            # Hitung Loss Reward Pedictions
-            # 1. Sampel 3 frame dengan pleuang rewarding state = 0.5
-            states, prev_rewards, next_rewards = experience_replay.sample_rp()
+            # Hitung Loss Reward Prediction
+            # 1. Sampel frame dengan peluang rewarding state = 0.5
+            states, rewards, actions, dones, pixel_changes = (
+                experience_replay.sample_rp()
+            )
             # 2. Hitung loss reward prediction
-            rp_loss = local_model.rp_loss(states, prev_rewards, next_rewards[-1])
+            rp_loss = local_model.rp_loss(states, rewards)
+
+
+            # Hitung loss Value Replay
+            states, rewards, actions, dones, pixel_changes = (
+                experience_replay.sample_sequence(params["unroll_steps"] + 1)
+            )
+            vr_loss = local_model.vr_loss(states, actions, rewards, dones)
+
+            # print(f"A3C Loss = {a3c_loss}\t PC Loss = {pc_loss}\t VR Loss = {vr_loss}\t RP Loss = {rp_loss}\n" )
 
             # Penjumlahan loss a3c, pixel control, value replay dan reward prediction
             total_loss = (
-                a3c_loss + vr_loss + params["task_weight"] * aux_control_loss + rp_loss
+                a3c_loss + params["pc_weight"] * pc_loss + rp_loss + vr_loss 
             )
 
             total_loss.backward()
-            nn.utils.clip_grad_norm_(local_model.parameters(), 10)
+            nn.utils.clip_grad_norm_(local_model.parameters(), 40)
             ensure_share_grads(
                 local_model=local_model, global_model=global_model, device=device
             )
@@ -170,22 +215,23 @@ def train(
 
 def objective(trial: optuna.Trial):
     try:
-        env = make_env(resize=84, grayscale=False, framestack=None)
+        env = make_env(resize=84, render_mode="rgb_array", level=19)
 
         params = {
             "lr": trial.suggest_float("learning rate", 1e-4, 5e-3, log=True),
-            "task_weight": trial.suggest_float("pc weight", 0.01, 0.1, log=True),
+            "pc_weight": trial.suggest_float("lambda pc", 0.01, 0.1, log=True),
             "beta": trial.suggest_float("entropy coefficient", 5e-4, 1e-2, log=True),
-            "gamma": trial.suggest_float("dicount factor", 0.9, 0.999, log=True),
+            # "gamma": trial.suggest_float("dicount factor", 0.9, 0.999, log=True),
+            "gamma": 0.99,
             "optimizer": "RMSProp",
             "device": torch.device("cuda"),
             "hidden_size": 256,
             "n_actions": env.action_space.n,
             "model_path": "trained_models",
-            "input_shape": env.observation_space.shape,
+            "input_shape": (84, 84, 3),
             "unroll_steps": 20,
             "test_episodes": 5,
-            "num_agents": 1,
+            "num_agents": 2,
         }
 
         global_model = UNREAL(
@@ -206,7 +252,10 @@ def objective(trial: optuna.Trial):
 
         processes = []
         stop_event = mp.Event()
-        global_rewards = mp.Value("f", 0.0)
+        global_scores = mp.Value("i", 0)
+        global_blocks = mp.Value("i", 0)
+        global_lines = mp.Value("i", 0)
+        global_tries = mp.Value("i", 0)
         global_steps = mp.Value("i", 0)
         start_time = time.time()
 
@@ -219,7 +268,10 @@ def objective(trial: optuna.Trial):
                     global_model,
                     optimizer,
                     global_steps,
-                    global_rewards,
+                    global_scores,
+                    global_blocks,
+                    global_lines,
+                    global_tries,
                     stop_event,
                     trial,
                 ),
@@ -237,9 +289,9 @@ def objective(trial: optuna.Trial):
                 pbar.update(1)
 
                 # Cek apakah trial harus di-prune
-                if trial.should_prune():
-                    stop_event.set()
-                    break
+                # if trial.should_prune():
+                #     stop_event.set()
+                #     break
 
         stop_event.set()
 
@@ -250,14 +302,8 @@ def objective(trial: optuna.Trial):
 
         env.close()
 
-        # mean_lines = total_lines / num_test
-        # mean_blocks = total_blocks / num_test
-        # mean_eps_length = episode_length / num_test
-        # mean_blocks = global_block_placed.value / params["num_agents"]
-        # return mean_blocks
-        # , mean_lines, mean_eps_length
-        mean_rewards = global_rewards.value / global_steps.value
-        return mean_rewards
+        # mean_rewards = global_scores.value
+        return global_scores.value, global_blocks.value, global_lines.value, global_tries.value
 
 
     except KeyboardInterrupt:
@@ -277,10 +323,10 @@ if __name__ == "__main__":
             engine_kwargs={"connect_args": {"timeout": 30}},
         )
         study = optuna.create_study(
-            study_name="final",
+            study_name="final-unreal",
             storage=storage,
             load_if_exists=True,
-            directions=["maximize"]
+            directions=["maximize", "maximize", "maximize", "minimize"]
         )
 
         if os.path.isfile("./tuning/sampler.pkl"):
@@ -290,7 +336,7 @@ if __name__ == "__main__":
         completed_trials = len(
             [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
         )
-        n_trials = 15
+        n_trials = 5
 
         study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
 
@@ -299,9 +345,9 @@ if __name__ == "__main__":
         print(f"Number of trials on the Pareto front: {len(study.best_trials)}")
 
         metrics = [
-            (0, "rewards"),
-            # (0, "blocks placed"),
-            # (1, "lines cleared"),
+            (0, "scores"),
+            (1, "blocks placed"),
+            (2, "lines cleared"),
             # (2, "episodes length"),
         ]
 

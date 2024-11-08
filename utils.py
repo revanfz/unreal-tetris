@@ -39,7 +39,7 @@ def preprocessing(state: np.ndarray, pixel_control: bool = False) -> Tensor:
     return obs
 
 def make_env(
-    id: str = "TetrisA-v2",
+    id: str = "TetrisA-v3",
     grayscale: bool = False,
     resize: int = 0,
     render_mode="rgb_array",
@@ -75,8 +75,6 @@ def make_env(
     # else:
         # env = FrameSkipWrapper(env, 2)
 
-
-
     return env
 
 
@@ -88,12 +86,15 @@ def ensure_share_grads(
     for local_param, global_param in zip(
         local_model.parameters(), global_model.parameters()
     ):
+        # for name, param in local_model.named_parameters():
+        #     if param.grad is not None:
+        #         print(f"{name} grad norm: {param.grad.norm()}")
+        #     else:
+        #         print(f"{name} is none")
         if global_param.grad is not None:
             return
-        if device.type == "cuda":
-            global_param._grad = local_param.grad.cpu()
         else:
-            global_param._grad = local_param.grad
+            global_param._grad = local_param.grad.cpu()
 
 
 def update_progress(global_steps: Synchronized, max_steps: float, checkpoint_steps = 0, desc=None, unit=None):

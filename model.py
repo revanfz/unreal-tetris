@@ -194,35 +194,45 @@ class UNREAL(nn.Module):
         hidden: Union[tuple, None] = None,
     ):
         conv_feat = self.conv_layer(state)
-        lstm_input = torch.cat([conv_feat, action_oh, reward], dim=1)
+        lstm_input = torch.cat([conv_feat, action_oh, reward], dim=1).to(self.device)
         hx, cx = self.lstm_layer(lstm_input, hidden)
         policy, value = self.ac_layer(hx)
         return policy, value, hx, cx
 
     def a3c_loss(
         self,
-        entropies: np.ndarray,
+        states: np.ndarray,
         rewards: np.ndarray,
-        values: np.ndarray,
+        actions: np.ndarray,
         dones: np.ndarray,
-        log_probs: np.ndarray,
         R=float,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        log_probs = torch.FloatTensor(log_probs).to(self.device)
-        entropies = torch.FloatTensor(entropies).to(self.device)
-        values = torch.FloatTensor(values).to(self.device)
+        states = torch.Tensor(np.array(states)).to(self.device)
+        actions = torch.LongTensor(actions).to(self.device)
+        actions_oh = F.one_hot(actions, self.n_actions).to(self.device)
+        rewards = torch.FloatTensor(rewards).unsqueeze(1).to(self.device)
+
+        policies, values, _, _ = self.forward(
+            states, actions_oh, rewards, None
+        )
+
+        probs = F.softmax(policies, dim=1)
+        dist = Categorical(probs=probs)
+        entropy = dist.entropy()
+        log_probs = dist.log_prob(actions)
 
         returns = torch.zeros(len(rewards)).to(self.device)
         for t in reversed(range(len(rewards))):
             R = rewards[t] + self.gamma * (1 - dones[t]) * R
             returns[t] = R
+        returns = returns.unsqueeze(1)
 
         policy_loss = -(
-            log_probs * (returns - values.detach()) + self.beta * entropies
+            log_probs * (returns - values) + self.beta * entropy
         ).mean()
         value_loss = F.mse_loss(values, returns)
 
-        return policy_loss + 0.5 * value_loss
+        return policy_loss + 0.5 * value_loss, entropy
 
     def control_loss(
         self,
@@ -234,20 +244,20 @@ class UNREAL(nn.Module):
     ):
         states = torch.Tensor(np.array(states)).to(self.device)
         actions = torch.LongTensor(actions).to(self.device)
-        actions_oh = F.one_hot(actions, self.n_actions)
+        actions_oh = F.one_hot(actions, self.n_actions).to(self.device)
         rewards = torch.FloatTensor(rewards).unsqueeze(1).to(self.device)
         pixel_changes = torch.FloatTensor(np.array(pixel_changes)).to(self.device)
 
         R = torch.zeros((20, 20), device=self.device)
         if not dones[-2]:
-            with torch.no_grad():
-                conv_feat = self.conv_layer(states[-1].unsqueeze(0))
-                lstm_input = torch.cat(
-                    [conv_feat, actions_oh[-1].unsqueeze(0), rewards[-1].unsqueeze(0)],
-                    dim=1,
-                )
-                lstm_feat, _ = self.lstm_layer(lstm_input, None)
-                _, R = self.pc_layer(lstm_feat)
+            conv_feat = self.conv_layer(states[-1].unsqueeze(0))
+            lstm_input = torch.cat(
+                [conv_feat, actions_oh[-1].unsqueeze(0), rewards[-1].unsqueeze(0)],
+                dim=1,
+            ).to(self.device)
+            lstm_feat, _ = self.lstm_layer(lstm_input, None)
+            _, R = self.pc_layer(lstm_feat)
+            R = R.detach()
 
         returns = []
         for i in reversed(range(len(rewards[:-1]))):
@@ -256,7 +266,7 @@ class UNREAL(nn.Module):
         returns = torch.stack(returns).squeeze(1).to(self.device) # batch 20 20
 
         conv_feat = self.conv_layer(states[:-1])
-        lstm_input = torch.cat([conv_feat, actions_oh[:-1], rewards[:-1]], dim=1)
+        lstm_input = torch.cat([conv_feat, actions_oh[:-1], rewards[:-1]], dim=1).to(self.device)
         lstm_feat, _ = self.lstm_layer(lstm_input, None)
         q_aux, _ = self.pc_layer(lstm_feat)  # batch 12 20 20
 
@@ -305,7 +315,7 @@ class UNREAL(nn.Module):
                 action = actions_oh[-1].unsqueeze(0)
                 reward = rewards[-1].unsqueeze(0)
                 _, R, _, _ = self.forward(state, action, reward)
-                R = R.cpu()
+                # R = R.cpu()
 
         returns = []
         for i in reversed(range(len(rewards[:-1]))):

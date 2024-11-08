@@ -1,3 +1,4 @@
+import time
 import torch
 import numpy as np
 import torch.nn as nn
@@ -18,15 +19,15 @@ from utils import make_env, pixel_diff, preprocessing, ensure_share_grads
 #     task_weight=0.01,
 # )
 params = dict(
-    lr=0.003,
+    lr=0.0003,
     unroll_steps=20,
-    beta=0.01,
-    gamma=0.99,
+    beta=0.00067,
+    gamma=0.95,
     hidden_size=256,
-    task_weight=0.9,
+    task_weight=0.01,
 )
 
-device = torch.device("cpu")
+device = torch.device("cuda")
 
 if __name__ == "__main__":
     env = make_env(resize=84, render_mode="human", level=19)
@@ -35,7 +36,7 @@ if __name__ == "__main__":
         n_inputs=(84, 84, 3),
         n_actions=env.action_space.n,
         hidden_size=256,
-        device=device,
+        device=torch.device("cpu"),
         beta=params["beta"],
         gamma=params["gamma"],
     )
@@ -46,18 +47,21 @@ if __name__ == "__main__":
         hidden_size=256,
         device=device,
     )
-    experience_replay = ReplayBuffer(100)
+    local_model.train()
+    experience_replay = ReplayBuffer(2000)
 
     state, info = env.reset()
     state = preprocessing(state)
     prev_action = F.one_hot(torch.LongTensor([0]), env.action_space.n).to(device)
     prev_reward = torch.zeros(1, 1).to(device)
+    hx = torch.zeros(1, params["hidden_size"]).to(device)
+    cx = torch.zeros(1, params["hidden_size"]).to(device)
 
     while not experience_replay._is_full():
         with torch.no_grad():
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
-            policy, value, _, _ = local_model(
-                state_tensor, prev_action, prev_reward, None
+            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
+            policy, value, hx, cx = local_model(
+                state_tensor, prev_action, prev_reward, (hx, cx)
             )
             probs = F.softmax(policy, dim=1)
             dist = Categorical(probs=probs)
@@ -71,16 +75,21 @@ if __name__ == "__main__":
         prev_action = F.one_hot(action, num_classes=env.action_space.n).to(device)
         prev_reward = torch.FloatTensor([[reward]]).to(device)
 
+        hx = hx.detach()
+        cx = cx.detach()
+
         if done:
             state, info = env.reset()
             state = preprocessing(state)
+            hx = torch.zeros(1, params["hidden_size"]).to(device)
+            cx = torch.zeros(1, params["hidden_size"]).to(device)
 
     done = True
 
     while True:
         optimizer.zero_grad()
         local_model.load_state_dict(global_model.state_dict())
-        log_probs, entropies, rewards, values, dones = [], [], [], [], []
+        eps_length = 0
 
         if done:
             state, info = env.reset()
@@ -94,15 +103,12 @@ if __name__ == "__main__":
             cx = cx.detach()
 
         for t in range(params["unroll_steps"]):
-            state_tensor = torch.from_numpy(state).unsqueeze(0)
+            state_tensor = torch.from_numpy(state).unsqueeze(0).to(device)
             policy, value, hx, cx = local_model(state_tensor, action, reward, (hx, cx))
 
             probs = F.softmax(policy, dim=1)
             dist = Categorical(probs)
-            action = dist.sample().detach()
-
-            log_prob = dist.log_prob(action)
-            entropy = dist.entropy()
+            action = dist.sample()
 
             next_state, reward, done, _, info = env.step(action.item())
             next_state = preprocessing(next_state)
@@ -110,14 +116,10 @@ if __name__ == "__main__":
             experience_replay.store(state, reward, action.item(), done, pixel_change)
             state = next_state
 
-            values.append(value)
-            log_probs.append(log_prob)
-            rewards.append(reward)
-            entropies.append(entropy)
-            dones.append(done)
-
             action = F.one_hot(action, num_classes=env.action_space.n).to(device)
             reward = torch.FloatTensor([[reward]]).to(device)
+
+            eps_length += 1
 
             if done:
                 break
@@ -132,14 +134,13 @@ if __name__ == "__main__":
                     reward,
                     (hx, cx),
                 )
-                R = R.cpu()
 
-        a3c_loss = local_model.a3c_loss(
-            entropies=entropies,
+        states, rewards, actions, dones, pixel_change = experience_replay.sample(eps_length)
+        a3c_loss, entropy = local_model.a3c_loss(
+            states=states,
             dones=dones,
-            log_probs=log_probs,
+            actions=actions,
             rewards=rewards,
-            values=values,
             R=R,
         )
 
@@ -165,9 +166,8 @@ if __name__ == "__main__":
         vr_loss = local_model.vr_loss(states, actions, rewards, dones)
 
         print(f"A3C Loss = {a3c_loss}\t PC Loss = {pc_loss}\t VR Loss = {vr_loss}\t RP Loss = {rp_loss}\n" )
-
-        total_loss = a3c_loss + pc_loss + rp_loss + vr_loss
-        print(total_loss)
+        print(f"Entropy: {entropy.mean().item()}")
+        total_loss = a3c_loss + params["task_weight"] * pc_loss + rp_loss + vr_loss
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(local_model.parameters(), 40)
         ensure_share_grads(

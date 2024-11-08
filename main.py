@@ -31,7 +31,7 @@ def get_args():
         "--beta", type=float, default=0.01, help="entropy coefficient"
     )
     parser.add_argument(
-        "--task-weight", type=float, default=0.9, help="task weight"
+        "--pc-weight", type=float, default=1.0, help="task weight"
     )
     parser.add_argument(
         "--optimizer",
@@ -78,7 +78,7 @@ def get_args():
     parser.add_argument(
         "--resume-training",
         type=bool,
-        default=False,
+        default=True,
         help="Load weight from previous trained stage",
     )
     args = parser.parse_args()
@@ -87,7 +87,7 @@ def get_args():
 
 def train(params: argparse.Namespace) -> None:
     try:
-        device = torch.device("cuda")
+        device = torch.device("cpu")
         manual_seed(42)
 
         env = make_env(grayscale=False, framestack=None, resize=84)
