@@ -18,6 +18,8 @@ def worker(
     optimizer: SharedAdam,
     global_steps: Synchronized,
     global_episodes: Synchronized,
+    global_lines: Synchronized,
+    global_scores: Synchronized,
     params: Namespace,
     device: torch.device,
 ):
@@ -42,9 +44,7 @@ def worker(
         local_model.train()
         
         if not rank:
-            total_lines = 0
-            total_score = 0
-            writer = SummaryWriter(f"{params.log_path}/unreal-tetris")
+            writer = SummaryWriter(f"{params.log_path}/UNREAL")
             writer.add_graph(local_model, (
                 torch.zeros(1, 3, 84, 84).to(device),
                 F.one_hot(torch.LongTensor([0]), env.action_space.n).to(device),
@@ -139,15 +139,17 @@ def worker(
                     global_steps.value += 1
 
                 if done:
-                    if not rank:
-                        total_lines += info["number_of_lines"]
-                        total_score += info["score"]
-                        
-                        writer.add_scalar(
-                            f"Block placed",
-                            sum(info["statistics"].values()),
-                            global_episodes.value,
-                        )
+                    with global_lines.get_lock():
+                        global_lines.value += info["number_of_lines"]
+
+                    with global_scores.get_lock():
+                        global_scores.value += info["score"]
+                    
+                    writer.add_scalar(
+                        f"Agent-{rank}/Block placed",
+                        sum(info["statistics"].values()),
+                        global_episodes.value,
+                    )
                     break
 
             # Bootstrapping
@@ -214,10 +216,10 @@ def worker(
                 writer.add_scalar(f"Losses", total_loss, global_episodes.value)
                 writer.add_scalar(f"Rewards", sum(rewards), global_episodes.value)
                 writer.add_scalar(
-                    f"Total lines cleared", total_lines, global_episodes.value
+                    f"Total lines cleared", global_lines.value, global_episodes.value
                 )
                 writer.add_scalar(
-                    f"Total scores", total_score, global_episodes.value
+                    f"Total scores", global_scores.value, global_episodes.value
                 )
 
                 writer.add_scalar(
@@ -238,12 +240,14 @@ def worker(
                             "optimizer_state_dict": optimizer.state_dict(),
                             "steps": global_steps.value,
                             "episodes": global_episodes.value,
+                            "lines": global_lines.value,
+                            "scores": global_scores.value,
                         },
-                        f"{params.model_path}/unreal_checkpoint.tar",
+                        f"{params.model_path}/UNREAL_checkpoint.tar",
                     )
 
         if not rank:
-            torch.save(global_model.state_dict(), f"{params.model_path}/unreal_tetris.pt")
+            torch.save(global_model.state_dict(), f"{params.model_path}/UNREAL.pt")
         finished = True
         print(f"Pelatihan agen {rank} selesai")
 
@@ -268,7 +272,7 @@ def worker(
                     "steps": global_steps.value,
                     "episodes": global_episodes.value,
                 },
-                f"{params.model_path}/unreal_checkpoint.tar",
+                f"{params.model_path}/UNREAL_checkpoint.tar",
             )
         if not rank:
             writer.close()

@@ -48,7 +48,7 @@ def get_args():
     parser.add_argument(
         "--save-interval",
         type=int,
-        default=5e3,
+        default=8e3,
         help="jumlah episode sebelum menyimpan checkpoint model",
     )
     parser.add_argument(
@@ -109,17 +109,21 @@ def train(params: argparse.Namespace) -> None:
         processes = []
         global_steps = mp.Value("i", 0)
         global_episodes = mp.Value("i", 0)
+        global_lines = mp.Value("i", 0)
+        global_scores = mp.Value("i", 0)
 
         if opt.resume_training:
             if os.path.isdir(opt.model_path):
                 load_model = True
-                file_ = f"{opt.model_path}/unreal_checkpoint.tar"
+                file_ = f"{opt.model_path}/UNREAL_checkpoint.tar"
                 if os.path.isfile(file_):
                     checkpoint = load(file_, weights_only=True)
                     global_model.load_state_dict(checkpoint["model_state_dict"])
                     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
                     global_steps = mp.Value("i", checkpoint["steps"])
                     global_episodes = mp.Value("i", checkpoint["episodes"])
+                    global_lines = mp.Value("i", checkpoint["lines"])
+                    global_scores = mp.Value("i", checkpoint["scores"])
                     print(
                         f"Resuming training for previous model, state: Steps {checkpoint['steps']}, Episodes: {checkpoint['episodes']}"
                     )
@@ -162,6 +166,8 @@ def train(params: argparse.Namespace) -> None:
                     global_steps,
                     global_episodes,
                     params,
+                    global_lines,
+                    global_scores,
                     device,
                 ),
             )
