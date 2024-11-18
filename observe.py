@@ -31,7 +31,7 @@ params = dict(
 device = torch.device("cpu")
 
 if __name__ == "__main__":
-    env = make_env(resize=84, render_mode="human", level=19, skip=2)
+    env = make_env(resize=84, render_mode="human", level=18, skip=2)
     checkpoint = torch.load("trained_models/final.pt", weights_only=True)
 
     local_model = UNREAL(
@@ -60,12 +60,13 @@ if __name__ == "__main__":
         else:
             hx = hx.detach()
             cx = cx.detach()
+        
+        with torch.no_grad():
+            state_tensor = torch.from_numpy(state).unsqueeze(0).to(device)
+            policy, value, hx, cx = local_model(state_tensor, action, reward, (hx, cx))
 
-        state_tensor = torch.from_numpy(state).unsqueeze(0).to(device)
-        policy, value, hx, cx = local_model(state_tensor, action, reward, (hx, cx))
-
-        dist = Categorical(probs=policy)
-        action = dist.sample()
+            dist = Categorical(probs=policy)
+            action = dist.sample()
 
         next_state, reward, done, _, info = env.step(action.item())
         state = preprocessing(next_state)

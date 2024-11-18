@@ -49,14 +49,13 @@ def make_env(
     record = False,
     path: str | None = "./videos",
     format: str | None = "gif",
-    level: int | None = 0,
+    level: int = 0,
     num_games: int | None = None
 ):
     make_params = {
-        "render_mode": "rgb_array" if record else render_mode
+        "render_mode": "rgb_array" if record else render_mode,
+        "level": level
     }
-    if level is not None:
-        make_params["level"] = level
 
     env = gym_tetris.make(id, **make_params)
     env = JoypadSpace(env, MOVEMENT)

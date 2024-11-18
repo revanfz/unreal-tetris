@@ -19,18 +19,8 @@ def get_args():
             UNTUK MENGHASILKAN AGEN CERDAS (STUDI KASUS: PERMAINAN TETRIS)
         """
     )
-    parser.add_argument("--lr", type=float, default=0.0002, help="Learning rate")
     parser.add_argument(
-        "--gamma", type=float, default=0.99, help="discount factor for rewards"
-    )
-    parser.add_argument(
-        "--beta", type=float, default=0.001, help="entropy coefficient"
-    )
-    parser.add_argument(
-        "--task-weight", type=float, default=0.09, help="task weight"
-    )
-    parser.add_argument(
-        "--test-case", type=int, default=1, help="Nomor test case"
+        "--start-case", type=int, default=1, help="Starting point test case"
     )
     parser.add_argument(
         "--num-tries", type=int, default=30, help="Jumlah permainan untuk dievaluasi"
@@ -39,23 +29,21 @@ def get_args():
     return args
 
 params = get_args()
-total_test_case = 10
-data_dir = "./UNREAL-agent/csv"
+total_test_case = 20
+data_dir = "./UNREAL-tetris/csv"
 
 if __name__ == "__main__":
-    # if not os.path.isdir(data_dir):
-    #     os.makedirs(data_dir, exist_ok=True)
+    if not os.path.isdir(data_dir):
+        os.makedirs(data_dir, exist_ok=True)
 
     device = torch.device("cpu")
-    checkpoint = torch.load("trained_models/test.pt", weights_only=True)
+    checkpoint = torch.load("trained_models/final.pt", weights_only=True)
 
     model =  UNREAL(
         n_inputs=(84, 84, 3),
         n_actions=12,
         hidden_size=256,
         device=device,
-        beta=params.beta,
-        gamma=params.gamma,
     )
     model.load_state_dict(
         checkpoint
@@ -63,18 +51,18 @@ if __name__ == "__main__":
     model.eval()
 
     for test_case in range(total_test_case):
-        # id = params.test_case + test_case
-        # video_path = f"./UNREAL-agent/videos/{params.test_case + test_case}"
+        id = params.start_case + test_case
+        video_path = f"./UNREAL-tetris/videos/{params.start_case + test_case}"
     
-        # if not os.path.isdir(video_path):
-        #     os.makedirs(video_path, exist_ok=True)
-        # if os.listdir(video_path):
-        #     raise Exception("Folder is not empty. Folder berisi hasil runs sebelumnya")
+        if not os.path.isdir(video_path):
+            os.makedirs(video_path, exist_ok=True)
+        if os.listdir(video_path):
+            raise Exception("Folder is not empty. Folder berisi hasil runs sebelumnya")
         
         env = make_env(
-            # record=True,
+            record=True,
             resize=84,
-            # path=video_path,
+            path=video_path,
             level = id - 1,
             num_games = params.num_tries,
             id="TetrisA-v0"
@@ -128,10 +116,10 @@ if __name__ == "__main__":
                     break
             
         
-        # data["episode_length"] = np.array(env.length_queue)
-        # data["episode_time"] = np.array(env.time_queue)
-        # del env
+        data["episode_length"] = np.array(env.length_queue)
+        data["episode_time"] = np.array(env.time_queue)
+        del env
 
-        # df = pd.DataFrame(data)
-        # pp(df)
-        # df.to_csv(f"{data_dir}/{id}.csv", index=False)
+        df = pd.DataFrame(data)
+        pp(df)
+        df.to_csv(f"{data_dir}/{id}.csv", index=False)
