@@ -23,15 +23,15 @@ def get_args():
             UNTUK MENGHASILKAN AGEN CERDAS (STUDI KASUS: PERMAINAN TETRIS)
         """
     )
-    parser.add_argument("--lr", type=float, default=0.0003, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=0.0002, help="Learning rate")
     parser.add_argument(
         "--gamma", type=float, default=0.99, help="discount factor for rewards"
     )
     parser.add_argument(
-        "--beta", type=float, default=0.01, help="entropy coefficient"
+        "--beta", type=float, default=0.00102, help="entropy coefficient"
     )
     parser.add_argument(
-        "--pc-weight", type=float, default=1.0, help="task weight"
+        "--pc-weight", type=float, default=0.08928, help="task weight"
     )
     parser.add_argument(
         "--optimizer",
@@ -52,7 +52,7 @@ def get_args():
         help="jumlah episode sebelum menyimpan checkpoint model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=2e7, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=5e7, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
@@ -78,7 +78,7 @@ def get_args():
     parser.add_argument(
         "--resume-training",
         type=bool,
-        default=True,
+        default=False,
         help="Load weight from previous trained stage",
     )
     args = parser.parse_args()
@@ -115,7 +115,7 @@ def train(params: argparse.Namespace) -> None:
         if opt.resume_training:
             if os.path.isdir(opt.model_path):
                 load_model = True
-                file_ = f"{opt.model_path}/UNREAL_checkpoint.tar"
+                file_ = f"{opt.model_path}/final.tar"
                 if os.path.isfile(file_):
                     checkpoint = load(file_, weights_only=True)
                     global_model.load_state_dict(checkpoint["model_state_dict"])
@@ -165,9 +165,9 @@ def train(params: argparse.Namespace) -> None:
                     optimizer,
                     global_steps,
                     global_episodes,
-                    params,
                     global_lines,
                     global_scores,
+                    params,
                     device,
                 ),
             )

@@ -29,7 +29,7 @@ def worker(
 
         render_mode = "human" if not rank else "rgb_array"
         env = make_env(
-            resize=84, render_mode=render_mode, level=19
+            resize=84, render_mode=render_mode, level=19, id="TetrisA-v2", skip=2
         )
 
         # device = torch.device("cuda")
@@ -44,7 +44,7 @@ def worker(
         local_model.train()
         
         if not rank:
-            writer = SummaryWriter(f"{params.log_path}/UNREAL")
+            writer = SummaryWriter(f"{params.log_path}/final")
             writer.add_graph(local_model, (
                 torch.zeros(1, 3, 84, 84).to(device),
                 F.one_hot(torch.LongTensor([0]), env.action_space.n).to(device),
@@ -69,11 +69,17 @@ def worker(
                 policy, _, _, _ = local_model(
                     state_tensor, prev_action, prev_reward, None
                 )
-                probs = F.softmax(policy, dim=1)
-                dist = Categorical(probs=probs)
+
+                dist = Categorical(probs=policy)
                 action = dist.sample().cpu()
 
             next_state, reward, done, _, info = env.step(action.item())
+            # if info["number_of_lines"] > last_lines:
+            #     reward += (info["number_of_lines"] - last_lines) ** 2 * 10
+            #     last_lines = info["number_of_lines"]
+            # reward += (sum(info["statistics"].values()) - last_block) * 1
+            # last_block = sum(info["statistics"].values())
+
             next_state = preprocessing(next_state)
             pixel_change = pixel_diff(state, next_state)
             experience_replay.store(state, reward, action.item(), done, pixel_change)
@@ -116,11 +122,16 @@ def worker(
                     state_tensor, action, reward, (hx, cx)
                 )
 
-                probs = F.softmax(policy, dim=1)
-                dist = Categorical(probs=probs)
+                dist = Categorical(probs=policy)
                 action = dist.sample()
 
                 next_state, reward, done, _, info = env.step(action.item())
+                # if info["number_of_lines"] > last_lines:
+                #     reward += (info["number_of_lines"] - last_lines) ** 2 * 10
+                #     last_lines = info["number_of_lines"]
+                # reward += (sum(info["statistics"].values()) - last_block) * 1
+                # last_block = sum(info["statistics"].values())
+
                 next_state = preprocessing(next_state)
                 pixel_change = pixel_diff(state, next_state)
                 experience_replay.store(
@@ -145,11 +156,24 @@ def worker(
                     with global_scores.get_lock():
                         global_scores.value += info["score"]
                     
-                    writer.add_scalar(
-                        f"Agent-{rank}/Block placed",
-                        sum(info["statistics"].values()),
-                        global_episodes.value,
-                    )
+                    if not rank:
+                        writer.add_scalar(
+                            f"Agent Block placed",
+                            sum(info["statistics"].values()),
+                            global_episodes.value,
+                        )
+
+                        writer.add_scalar(
+                            f"Agent Scores",
+                            info["score"],
+                            global_episodes.value,
+                        )
+
+                        writer.add_scalar(
+                            f"Agent Lines",
+                            info['number_of_lines'],
+                            global_episodes.value,
+                        )
                     break
 
             # Bootstrapping
@@ -243,11 +267,11 @@ def worker(
                             "lines": global_lines.value,
                             "scores": global_scores.value,
                         },
-                        f"{params.model_path}/UNREAL_checkpoint.tar",
+                        f"{params.model_path}/final_checkpoint.tar",
                     )
 
         if not rank:
-            torch.save(global_model.state_dict(), f"{params.model_path}/UNREAL.pt")
+            torch.save(global_model.state_dict(), f"{params.model_path}/final.pt")
         finished = True
         print(f"Pelatihan agen {rank} selesai")
 
@@ -272,7 +296,7 @@ def worker(
                     "steps": global_steps.value,
                     "episodes": global_episodes.value,
                 },
-                f"{params.model_path}/UNREAL_checkpoint.tar",
+                f"{params.model_path}/final_checkpoint.tar",
             )
         if not rank:
             writer.close()

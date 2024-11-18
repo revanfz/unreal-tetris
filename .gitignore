@@ -1,2 +1,4 @@
 __pycache__
 tetris-agent
+UNREAL-agent
+tensorboard/**/events.out.tfevents.*

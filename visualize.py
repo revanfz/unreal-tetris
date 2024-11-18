@@ -104,7 +104,7 @@ def plot_observation(observation):
 
 # Contoh penggunaan
 
-env = make_env(grayscale=False, resize=84, framestack=None)
+env = make_env(grayscale=False, resize=84, framestack=None, skip=2)
 env.reset()
 model = SimpleConvNet(input_channels=env.observation_space.shape[-1])
 

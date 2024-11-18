@@ -7,24 +7,20 @@ from moviepy.video.fx.resize import resize
 
 
 class FrameSkipWrapper(gym.Wrapper):
-    def __init__(self, env, skip=4):
+    def __init__(self, env, skip=3):
         super().__init__(env)
         self.skip = skip
         self.env = env
 
-    def step(self, action, last_info = None):
+    def step(self, action):
         done = False
-        info = {}
         total_reward = 0.0
-        for _ in range(self.skip):
+        for i in range(self.skip):
+            if i != 0 :
+                action = 0
             obs, reward, done, truncated, info = self.env.step(action)
-            if last_info:
-                if info["number_of_lines"] > last_info["number_of_lines"]:
-                    reward += 10 * (info["number_of_lines"] - last_info["number_of_lines"])
             total_reward += reward
-            last_info = info
             if done:
-                total_reward -= 5
                 break
         return obs, total_reward, done, truncated, info
     

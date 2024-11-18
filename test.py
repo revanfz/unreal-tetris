@@ -1,3 +1,4 @@
+from pprint import pp
 import time
 import torch
 import numpy as np
@@ -30,7 +31,7 @@ params = dict(
 device = torch.device("cuda")
 
 if __name__ == "__main__":
-    env = make_env(resize=84, render_mode="human", level=19)
+    env = make_env(resize=84, render_mode="human", level=19, skip=2)
 
     global_model = UNREAL(
         n_inputs=(84, 84, 3),
@@ -63,8 +64,8 @@ if __name__ == "__main__":
             policy, value, hx, cx = local_model(
                 state_tensor, prev_action, prev_reward, (hx, cx)
             )
-            probs = F.softmax(policy, dim=1)
-            dist = Categorical(probs=probs)
+
+            dist = Categorical(probs=policy)
             action = dist.sample().cpu()
 
         next_state, reward, done, _, info = env.step(action.item())
@@ -98,6 +99,7 @@ if __name__ == "__main__":
             reward = torch.zeros(1, 1).to(device)
             hx = torch.zeros(1, params["hidden_size"]).to(device)
             cx = torch.zeros(1, params["hidden_size"]).to(device)
+            eps_r = []
         else:
             hx = hx.detach()
             cx = cx.detach()
@@ -110,7 +112,12 @@ if __name__ == "__main__":
             dist = Categorical(probs)
             action = dist.sample()
 
+            action = probs.argmax().unsqueeze(0)
+
+
             next_state, reward, done, _, info = env.step(action.item())
+            if reward:
+                eps_r.append(reward)
             next_state = preprocessing(next_state)
             pixel_change = pixel_diff(state, next_state)
             experience_replay.store(state, reward, action.item(), done, pixel_change)
@@ -122,6 +129,7 @@ if __name__ == "__main__":
             eps_length += 1
 
             if done:
+                print("Episode rewards: ", eps_r)
                 break
 
         # Bootstrapping
@@ -165,8 +173,8 @@ if __name__ == "__main__":
         )
         vr_loss = local_model.vr_loss(states, actions, rewards, dones)
 
-        print(f"A3C Loss = {a3c_loss}\t PC Loss = {pc_loss}\t VR Loss = {vr_loss}\t RP Loss = {rp_loss}\n" )
-        print(f"Entropy: {entropy.mean().item()}")
+        # print(f"A3C Loss = {a3c_loss}\t PC Loss = {pc_loss}\t VR Loss = {vr_loss}\t RP Loss = {rp_loss}\n" )
+        # print(f"Entropy: {entropy.mean().item()}")
         total_loss = a3c_loss + params["task_weight"] * pc_loss + rp_loss + vr_loss
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(local_model.parameters(), 40)

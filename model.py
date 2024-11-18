@@ -216,8 +216,7 @@ class UNREAL(nn.Module):
             states, actions_oh, rewards, None
         )
 
-        probs = F.softmax(policies, dim=1)
-        dist = Categorical(probs=probs)
+        dist = Categorical(probs=policies)
         entropy = dist.entropy()
         log_probs = dist.log_prob(actions)
 

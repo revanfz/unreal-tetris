@@ -113,8 +113,7 @@ def train(
                 state_tensor = torch.from_numpy(state).unsqueeze(0).to(device)
                 policy, value, hx, cx = local_model(state_tensor, action, reward, (hx, cx))
 
-                probs = F.softmax(policy, dim=1)
-                dist = Categorical(probs)
+                dist = Categorical(probs=policy)
                 action = dist.sample()
 
                 next_state, reward, done, _, info = env.step(action.item())
@@ -215,7 +214,7 @@ def train(
 
 def objective(trial: optuna.Trial):
     try:
-        env = make_env(resize=84, render_mode="rgb_array", level=19)
+        env = make_env(resize=84, render_mode="rgb_array", level=19, skip=2)
 
         params = {
             "lr": trial.suggest_float("learning rate", 1e-4, 5e-3, log=True),
