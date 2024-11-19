@@ -295,6 +295,8 @@ def worker(
                     "optimizer_state_dict": optimizer.state_dict(),
                     "steps": global_steps.value,
                     "episodes": global_episodes.value,
+                    "lines": global_lines.value,
+                    "scores": global_scores.value,
                 },
                 f"{params.model_path}/final_checkpoint.tar",
             )
