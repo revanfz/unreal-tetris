@@ -172,6 +172,9 @@ class UNREAL(nn.Module):
         hidden_size=256,
         beta=0.01,
         gamma=0.99,
+        pc: bool = True,
+        rp: bool = True,
+        vr: bool = True
     ):
         super(UNREAL, self).__init__()
         self.beta = beta
