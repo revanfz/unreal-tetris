@@ -4,13 +4,16 @@ import torch
 import argparse
 import pandas as pd
 import torch.nn.functional as F
+import torch.multiprocessing as mp
 
-from tqdm import tqdm
 from model import UNREAL
 from optimizer import SharedRMSprop
 from replay_buffer import ReplayBuffer
 from torch.distributions import Categorical
-from utils import make_env, preprocessing, pixel_diff
+from multiprocessing.synchronize import Lock
+from multiprocessing.managers import DictProxy
+from multiprocessing.sharedctypes import Synchronized
+from utils import ensure_share_grads, make_env, preprocessing, pixel_diff, update_progress
 
 
 def get_args():
@@ -38,7 +41,7 @@ def get_args():
 
 params = get_args()
 
-DATA_DIR = "./UNREAL-tetris/aux/"
+DATA_DIR = "./UNREAL-tetris/auxiliary/"
 postfix_pc = f"{'no-' if not params.pixel_control else ''}pc"
 postfix_rp = f"{'no-' if not params.reward_prediction else ''}rp"
 postfix_vr = f"{'no-' if not params.value_replay else ''}vr"
@@ -53,11 +56,37 @@ UNROLL_STEPS = 20
 HIDDEN_SIZE = 256
 PC_WEIGHT = 0.08928
 
+def store_data(shared_dict: DictProxy, data: dict, lock: Lock, type: str):
+    if type == "game":
+        with lock:
+            # Dapatkan data saat ini
+            current_lines = list(shared_dict["lines"])
+            current_lines.append(data["lines"])
+            shared_dict["lines"] = current_lines
 
-if __name__ == "__main__":
-    if not os.path.isdir(DATA_DIR):
-        os.makedirs(DATA_DIR, exist_ok=True)
 
+            current_blocks = list(shared_dict["block_placed"]) 
+            current_blocks.append(data["block_placed"])
+            shared_dict["block_placed"] = current_blocks
+ 
+    with lock:
+        current_scores = list(shared_dict["score"])
+        current_rewards = list(shared_dict["rewards"]) 
+        current_times = list(shared_dict["episode_time"])
+        current_lengths = list(shared_dict["episode_length"])
+        
+        current_scores.append(data["score"])
+        current_rewards.append(data["rewards"])
+        current_times.append(data["episode_time"])
+        current_lengths.append(data["episode_length"])
+        
+        shared_dict["score"] = current_scores
+        shared_dict["rewards"] = current_rewards
+        shared_dict["episode_time"] = current_times
+        shared_dict["episode_length"] = current_lengths
+
+
+def agent(rank: int, global_model: UNREAL, global_steps: Synchronized, shared_episode_dict: DictProxy, shared_game_dict, lock: Lock):
     device = torch.device("cpu")
 
     model =  UNREAL(
@@ -67,79 +96,64 @@ if __name__ == "__main__":
         beta=BETA,
         gamma=GAMMA,
         device=device,
-        pc=params.pixel_control,
-        rp=params.reward_prediction,
-        vr=params.value_replay
+        pc=global_model.use_pc,
+        rp=global_model.use_rp,
+        vr=global_model.use_vr
     )
     model.train()
     optimizer = SharedRMSprop(params=model.parameters(), lr=LEARNING_RATE)
+    optimizer.share_memory()
 
     env = make_env(
         resize=84,
         level = 19,
         skip=2,
-        id="TetrisA-v2"
+        id="TetrisA-v2",
+        render_mode="human" if not rank else "rgb_array"
     )
 
-    data_per_episode = {
-        "score": [],
-        "rewards": [],
-        "episode_time": [],
-        "episode_length": [],
-    }
+    done = True
 
-    data_per_game = {
-        "lines": [],
-        "score": [],
-        "rewards": [],
-        "block_placed": [],
-        "episode_time": [],
-        "episode_length": [],
-    }
+    experience_replay = ReplayBuffer(2000)
+    state, info = env.reset()
+    state = preprocessing(state)
+    prev_action = F.one_hot(torch.LongTensor([0]), env.action_space.n).to(device)
+    prev_reward = torch.zeros(1, 1).to(device)
+    hx = torch.zeros(1, HIDDEN_SIZE).to(device)
+    cx = torch.zeros(1, HIDDEN_SIZE).to(device)
+
+    while not experience_replay._is_full():
+        with torch.no_grad():
+            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
+            policy, _, _, _ = model(
+                state_tensor, prev_action, prev_reward, None
+            )
+
+            dist = Categorical(probs=policy)
+            action = dist.sample().cpu()
+
+        next_state, reward, done, _, info = env.step(action.item())
+
+        next_state = preprocessing(next_state)
+        pixel_change = pixel_diff(state, next_state)
+        experience_replay.store(state, reward, action.item(), done, pixel_change)
+        
+        state = next_state
+        prev_action = F.one_hot(action, num_classes=env.action_space.n).to(device)
+        prev_reward = torch.FloatTensor([[reward]]).to(device)
+
+        hx = hx.detach()
+        cx = cx.detach()
+
+        if done:
+            state, info = env.reset()
+            state = preprocessing(state)
+            hx = torch.zeros(1, HIDDEN_SIZE).to(device)
+            cx = torch.zeros(1, HIDDEN_SIZE).to(device)
 
     done = True
 
-    if params.value_replay or params.pixel_control or params.reward_predicion:
-        experience_replay = ReplayBuffer(2000)
-        state, info = env.reset()
-        state = preprocessing(state)
-        prev_action = F.one_hot(torch.LongTensor([0]), env.action_space.n).to(device)
-        prev_reward = torch.zeros(1, 1).to(device)
-        hx = torch.zeros(1, HIDDEN_SIZE).to(device)
-        cx = torch.zeros(1, HIDDEN_SIZE).to(device)
-
-        while not experience_replay._is_full():
-            with torch.no_grad():
-                state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
-                policy, _, _, _ = model(
-                    state_tensor, prev_action, prev_reward, None
-                )
-
-                dist = Categorical(probs=policy)
-                action = dist.sample().cpu()
-
-            next_state, reward, done, _, info = env.step(action.item())
-
-            next_state = preprocessing(next_state)
-            pixel_change = pixel_diff(state, next_state)
-            experience_replay.store(state, reward, action.item(), done, pixel_change)
-            
-            state = next_state
-            prev_action = F.one_hot(action, num_classes=env.action_space.n).to(device)
-            prev_reward = torch.FloatTensor([[reward]]).to(device)
-
-            hx = hx.detach()
-            cx = cx.detach()
-
-            if done:
-                state, info = env.reset()
-                state = preprocessing(state)
-                hx = torch.zeros(1, HIDDEN_SIZE).to(device)
-                cx = torch.zeros(1, HIDDEN_SIZE).to(device)
-
-    done = True
-
-    for step in tqdm(range(MAX_STEPS), desc=f"Evaluating {filename}"):
+    while global_steps.value < MAX_STEPS:
         for t in range(UNROLL_STEPS):
             episode_rewards = 0
             episode_time = time.perf_counter()
@@ -184,19 +198,26 @@ if __name__ == "__main__":
 
             episode_length += 1
 
+            with global_steps.get_lock():
+                global_steps.value += 1
+
             if done:
-                data_per_game["lines"].append(info['number_of_lines'])
-                data_per_game["block_placed"].append(sum(info["statistics"].values()))
-                data_per_game["score"].append(info['score'])
-                data_per_game["rewards"].append(game_reward)
-                data_per_game["episode_time"].append(stop_time - start_time)
-                data_per_game["episode_length"].append(episode_length)
+                store_data(shared_game_dict, {
+                    "lines": info['number_of_lines'],
+                    "block_placed": sum(info["statistics"].values()),
+                    "score": info['score'],
+                    "rewards": game_reward,
+                    "episode_time": stop_time - start_time,
+                    "episode_length": episode_length,
+                }, lock, "game")
                 break
         
-        data_per_episode["score"].append(info['score'])
-        data_per_episode["rewards"].append(episode_rewards)
-        data_per_episode["episode_time"].append(time.perf_counter() - episode_time)
-        data_per_episode["episode_length"].append(t + 1)
+        store_data(shared_episode_dict, {
+            "score": info['score'],
+            "rewards": episode_rewards,
+            "episode_time": time.perf_counter() - episode_time,
+            "episode_length": t + 1,
+        }, lock, "episode")
 
         # Bootstrapping
         R = 0.0
@@ -233,7 +254,7 @@ if __name__ == "__main__":
 
             total_loss += pc_loss
 
-        if model.use_pc:
+        if model.use_rp:
             # Hitung Loss Reward Prediction
             # 1. Sampel frame dengan peluang rewarding state = 0.5
             states, rewards, actions, dones, pixel_changes = (
@@ -254,9 +275,81 @@ if __name__ == "__main__":
 
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 40)
+        ensure_share_grads(
+            local_model=model, global_model=global_model, device=device
+        )
         optimizer.step()
 
-    df_game = pd.DataFrame(data_per_game)
-    df_episode = pd.DataFrame(data_per_episode)
+
+if __name__ == "__main__":
+    if not os.path.isdir(DATA_DIR):
+        os.makedirs(DATA_DIR, exist_ok=True)
+
+    global_model =  UNREAL(
+        n_inputs=(84, 84, 3),
+        n_actions=12,
+        hidden_size=HIDDEN_SIZE,
+        beta=BETA,
+        gamma=GAMMA,
+        device=torch.device("cpu"),
+        pc=params.pixel_control,
+        rp=params.reward_prediction,
+        vr=params.value_replay
+    )
+    global_model.share_memory()
+
+    manager = mp.Manager()
+    lock = mp.Lock()
+
+    shared_episode_dict = manager.dict({
+        "score": manager.list(),
+        "rewards": manager.list(),
+        "episode_time": manager.list(),
+        "episode_length": manager.list()
+    })
+
+    shared_game_dict = manager.dict({
+        "lines": manager.list(),
+        "score": manager.list(),
+        "rewards": manager.list(),
+        "block_placed": manager.list(),
+        "episode_time": manager.list(),
+        "episode_length": manager.list()
+    })
+
+    global_steps = mp.Value("i", 0)
+    processes = []
+
+    progress_process = mp.Process(
+        target=update_progress,
+        args=(
+            global_steps,
+            MAX_STEPS
+        ),
+        kwargs=({"desc": f"{filename}"})
+    )
+    progress_process.start()
+    processes.append(progress_process)
+
+    for rank in range(mp.cpu_count()):
+        process = mp.Process(
+            target=agent,
+            args=(
+                rank,
+                global_model,
+                global_steps,
+                shared_episode_dict,
+                shared_game_dict,
+                lock
+            )
+        )
+        process.start()
+        processes.append(process)
+
+    for process in processes:
+        process.join()
+
+    df_game = pd.DataFrame(dict(shared_game_dict))
+    df_episode = pd.DataFrame(dict(shared_episode_dict))
     df_game.to_csv(f"{DATA_DIR}/GAME-{filename}.csv", index=False)
-    df_episode.to_csv(f"{DATA_DIR}/EPISODE-{filename}.csv", index=False)
+    df_episode.to_csv(f"{DATA_DIR}/EPISODE-{filename}.csv", index=False)    

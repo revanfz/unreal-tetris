@@ -182,11 +182,17 @@ class UNREAL(nn.Module):
         self.device = device
         self.n_actions = n_actions
 
+        self.use_pc = pc
+        self.use_rp = rp
+        self.use_vr = vr
+
         self.conv_layer = ConvNet(n_inputs=n_inputs, hidden_size=hidden_size)
         self.lstm_layer = LSTMNet(n_actions=n_actions, hidden_size=hidden_size)
         self.ac_layer = ActorCritic(n_actions=n_actions, hidden_size=hidden_size)
-        self.pc_layer = PixelControl(n_actions=n_actions, hidden_size=hidden_size)
-        self.rp_layer = RewardPrediction(hidden_size=hidden_size)
+        if self.use_pc:
+            self.pc_layer = PixelControl(n_actions=n_actions, hidden_size=hidden_size)
+        if self.use_rp:
+            self.rp_layer = RewardPrediction(hidden_size=hidden_size)
         self.to(self.device)
 
     def forward(

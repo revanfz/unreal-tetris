@@ -100,6 +100,7 @@ def train(params: argparse.Namespace) -> None:
             beta=params.beta,
             gamma=params.gamma,
         )
+        global_model.share_memory()
 
         if opt.optimizer == "adam":
             optimizer = SharedAdam(global_model.parameters(), lr=params.lr)
