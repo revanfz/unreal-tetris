@@ -150,8 +150,9 @@ class RewardPrediction(nn.Module):
         )
 
     def forward(self, conv_feature):
-        probs = self.prediction_layer(conv_feature).unsqueeze(0)
-        return F.softmax(probs, dim=1)
+        return self.prediction_layer(conv_feature).unsqueeze(0)
+        # probs = self.prediction_layer(conv_feature).unsqueeze(0)
+        # return F.softmax(probs, dim=1)
 
 
 class UNREAL(nn.Module):
@@ -236,7 +237,7 @@ class UNREAL(nn.Module):
         returns = returns.unsqueeze(1)
 
         policy_loss = -(
-            log_probs * (returns - values) + self.beta * entropy
+            log_probs * (returns - values).detach() + self.beta * entropy
         ).mean()
         value_loss = F.mse_loss(values, returns)
 
@@ -257,19 +258,18 @@ class UNREAL(nn.Module):
         pixel_changes = torch.FloatTensor(np.array(pixel_changes)).to(self.device)
 
         R = torch.zeros((20, 20), device=self.device)
-        if not dones[-2]:
-            conv_feat = self.conv_layer(states[-1].unsqueeze(0))
-            lstm_input = torch.cat(
-                [conv_feat, actions_oh[-1].unsqueeze(0), rewards[-1].unsqueeze(0)],
-                dim=1,
-            ).to(self.device)
-            lstm_feat, _ = self.lstm_layer(lstm_input, None)
-            _, R = self.pc_layer(lstm_feat)
-            R = R.detach()
+        conv_feat = self.conv_layer(states[-1].unsqueeze(0))
+        lstm_input = torch.cat(
+            [conv_feat, actions_oh[-1].unsqueeze(0), rewards[-1].unsqueeze(0)],
+            dim=1,
+        ).to(self.device)
+        lstm_feat, _ = self.lstm_layer(lstm_input, None)
+        _, R = self.pc_layer(lstm_feat)
+        R = R.detach()
 
         returns = []
         for i in reversed(range(len(rewards[:-1]))):
-            R = pixel_changes[i] + 0.9 * R
+            R = pixel_changes[i] + 0.9 * dones[i] * R
             returns.insert(0, R)
         returns = torch.stack(returns).squeeze(1).to(self.device) # batch 20 20
 
@@ -300,6 +300,7 @@ class UNREAL(nn.Module):
 
         state_conv_feat = self.conv_layer(states).view(-1)
         reward_prediction = self.rp_layer(state_conv_feat)
+        # print("Debug: ", F.softmax(reward_prediction, dim=1).argmax(), reward_class, actual_reward)
         rp_loss = F.cross_entropy(reward_prediction, reward_class)
         return rp_loss
 
@@ -316,18 +317,16 @@ class UNREAL(nn.Module):
         actions = torch.LongTensor(actions).to(self.device)
         actions_oh = F.one_hot(actions, num_classes=self.n_actions).to(self.device)
         
-        R = 0.0
-        if not dones[-2]:
-            with torch.no_grad():
-                state = states[-1].unsqueeze(0)
-                action = actions_oh[-1].unsqueeze(0)
-                reward = rewards[-1].unsqueeze(0)
-                _, R, _, _ = self.forward(state, action, reward)
-                # R = R.cpu()
+        with torch.no_grad():
+            state = states[-1].unsqueeze(0)
+            action = actions_oh[-1].unsqueeze(0)
+            reward = rewards[-1].unsqueeze(0)
+            _, R, _, _ = self.forward(state, action, reward)
+            # R = R.cpu()
 
         returns = []
         for i in reversed(range(len(rewards[:-1]))):
-            R = rewards[i] + self.gamma * R
+            R = rewards[i] + self.gamma * dones[i] * R
             returns.insert(0, R)
         returns = torch.stack(returns).squeeze(1).to(self.device)
 

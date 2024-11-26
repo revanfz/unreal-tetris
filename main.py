@@ -2,15 +2,14 @@ import os
 
 os.environ["OMP_NUM_THREADS"] = "1"
 
+import numpy as np
 import torch
-import shutil
 import argparse
 import torch.multiprocessing as mp
 
 from pprint import pp
 from model import UNREAL
 from worker import worker
-from torch import manual_seed, load
 from utils import make_env, update_progress
 from optimizer import SharedAdam, SharedRMSprop
 
@@ -23,16 +22,14 @@ def get_args():
             UNTUK MENGHASILKAN AGEN CERDAS (STUDI KASUS: PERMAINAN TETRIS)
         """
     )
-    parser.add_argument("--lr", type=float, default=0.0002, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=0.00024, help="Learning rate")
     parser.add_argument(
         "--gamma", type=float, default=0.99, help="discount factor for rewards"
     )
     parser.add_argument(
-        "--beta", type=float, default=0.00102, help="entropy coefficient"
+        "--beta", type=float, default=0.00349, help="entropy coefficient"
     )
-    parser.add_argument(
-        "--pc-weight", type=float, default=0.08928, help="task weight"
-    )
+    parser.add_argument("--pc-weight", type=float, default=0.03094, help="task weight")
     parser.add_argument(
         "--optimizer",
         type=str,
@@ -48,11 +45,11 @@ def get_args():
     parser.add_argument(
         "--save-interval",
         type=int,
-        default=8e3,
+        default=1e4,
         help="jumlah episode sebelum menyimpan checkpoint model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=5e7, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=1e6, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
@@ -88,7 +85,11 @@ def get_args():
 def train(params: argparse.Namespace) -> None:
     try:
         device = torch.device("cpu")
-        manual_seed(42)
+        torch.manual_seed(42)
+        np.random.seed(42)
+        if device.type == "cuda":
+            torch.cuda.manual_seed(42)
+            torch.cuda.manual_seed_all(42)
 
         env = make_env(grayscale=False, framestack=None, resize=84)
 
@@ -101,6 +102,7 @@ def train(params: argparse.Namespace) -> None:
             gamma=params.gamma,
         )
         global_model.share_memory()
+        global_model.train()
 
         if opt.optimizer == "adam":
             optimizer = SharedAdam(global_model.parameters(), lr=params.lr)
@@ -111,20 +113,20 @@ def train(params: argparse.Namespace) -> None:
         global_steps = mp.Value("i", 0)
         global_episodes = mp.Value("i", 0)
         global_lines = mp.Value("i", 0)
-        global_scores = mp.Value("i", 0)
+        # global_scores = mp.Value("i", 0)
 
         if opt.resume_training:
             if os.path.isdir(opt.model_path):
                 load_model = True
-                file_ = f"{opt.model_path}/final.tar"
+                file_ = f"{opt.model_path}/tuned_checkpoint.tar"
                 if os.path.isfile(file_):
-                    checkpoint = load(file_, weights_only=True)
+                    checkpoint = torch.load(file_, weights_only=True)
                     global_model.load_state_dict(checkpoint["model_state_dict"])
                     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
                     global_steps = mp.Value("i", checkpoint["steps"])
                     global_episodes = mp.Value("i", checkpoint["episodes"])
                     global_lines = mp.Value("i", checkpoint["lines"])
-                    global_scores = mp.Value("i", checkpoint["scores"])
+                    # global_scores = mp.Value("i", checkpoint["scores"])
                     print(
                         f"Resuming training for previous model, state: Steps {checkpoint['steps']}, Episodes: {checkpoint['episodes']}"
                     )
@@ -137,22 +139,23 @@ def train(params: argparse.Namespace) -> None:
         else:
             load_model = False
 
-
-        global_model.train()
-        optimizer.share_memory()
         pp(opt)
         progress_process = mp.Process(
             target=update_progress,
             args=(
                 global_steps,
-                (
-                    opt.max_steps - global_steps.value
-                    if load_model
-                    else opt.max_steps
-                ),
-                checkpoint["steps"] if load_model else 0
+                (opt.max_steps - global_steps.value if load_model else opt.max_steps),
+                checkpoint["steps"] if load_model else 0,
             ),
-            kwargs=({"desc": "Resuming Training. Total Steps" if load_model else "Total Steps"})
+            kwargs=(
+                {
+                    "desc": (
+                        "Resuming Training. Total Steps"
+                        if load_model
+                        else "Total Steps"
+                    )
+                }
+            ),
         )
         progress_process.start()
         processes.append(progress_process)
@@ -167,7 +170,7 @@ def train(params: argparse.Namespace) -> None:
                     global_steps,
                     global_episodes,
                     global_lines,
-                    global_scores,
+                    # global_scores,
                     params,
                     device,
                 ),

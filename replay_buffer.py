@@ -68,8 +68,8 @@ class ReplayBuffer:
         for i in range(size):
             frame = self.buffer[start_pos + i]
             sampled_frames.append(frame)
-            if frame[3]:
-                break
+            # if frame[3]:
+            #     break
 
         return map(list, zip(*sampled_frames))
 

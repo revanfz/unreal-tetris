@@ -1,3 +1,4 @@
 __pycache__
 tensorboard/**/events.out.tfevents.*
 **/videos
+LOG 100m.zip

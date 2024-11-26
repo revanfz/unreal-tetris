@@ -4,13 +4,12 @@ import time
 import numpy as np
 
 from tqdm import tqdm
-from torch import device
+from torch import device, manual_seed
 from gymnasium.wrappers import (
     ResizeObservation,
     GrayscaleObservation,
     NormalizeObservation,
     FrameStackObservation,
-    MaxAndSkipObservation,
     RecordEpisodeStatistics,
 )
 
@@ -19,7 +18,7 @@ from wrapper import FrameSkipWrapper, RecordVideo
 # from wrapper import FrameSkipWrapper, RecordVideo
 from torchvision.transforms import v2
 from nes_py.wrappers import JoypadSpace
-from gym_tetris.actions import MOVEMENT
+from gym_tetris.actions import SIMPLE_MOVEMENT
 from multiprocessing.sharedctypes import Synchronized
 
 
@@ -52,14 +51,16 @@ def make_env(
     level: int = 0,
     num_games: int | None = None
 ):
+    
+    manual_seed(42)
+    np.random.seed(42)
     make_params = {
         "render_mode": "rgb_array" if record else render_mode,
         "level": level
     }
 
     env = gym_tetris.make(id, **make_params)
-    env = JoypadSpace(env, MOVEMENT)
-    # env = MaxAndSkipObservation(env, skip=skip)
+    env = JoypadSpace(env, SIMPLE_MOVEMENT)
     env = FrameSkipWrapper(env, skip=skip)
 
     if grayscale:

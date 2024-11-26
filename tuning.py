@@ -19,12 +19,12 @@ from torch.distributions import Categorical
 from multiprocessing.synchronize import Event
 from optimizer import SharedAdam, SharedRMSprop
 from multiprocessing.sharedctypes import Synchronized
-from utils import ensure_share_grads, make_env, pixel_diff, preprocessing
+from utils import ensure_share_grads, make_env, pixel_diff, preprocessing, update_progress
 
 
 def print_best_trial(trials, index: int, metric_name: str):
     best_trial = max(trials, key=lambda t: t.values[index])
-    print(f"\nTrial with highest {metric_name}:")
+    print(f"\nTrial with {'highest' if metric_name != 'game tries' else 'lowest'} {metric_name}:")
     print(f"\tnumber: {best_trial.number}")
     print(f"\tparams: {best_trial.params}")
     print(f"\tvalues: {best_trial.values}")
@@ -41,14 +41,13 @@ def train(
     global_blocks: Synchronized,
     global_lines: Synchronized,
     global_tries: Synchronized,
-    stop_event: Event,
-    trial: optuna.Trial,
+    # stop_event: Event,
+    # trial: optuna.Trial,
 ) -> None:
     try:
-        device = torch.device("cuda")
-
+        device = params["device"]
         torch.manual_seed(42 + rank)
-        env = make_env(resize=84, render_mode="rgb_array", level=19)
+        env = make_env(resize=84, render_mode="rgb_array", id="TetrisA-v2", level=19)
 
         local_model = UNREAL(
             n_inputs=(84, 84, 3),
@@ -59,7 +58,7 @@ def train(
             device=device,
         )
         local_model.train()
-        experience_replay = ReplayBuffer(500)
+        experience_replay = ReplayBuffer(2000)
 
         state, info = env.reset()
         state = preprocessing(state)
@@ -89,8 +88,11 @@ def train(
                 state = preprocessing(state)
 
         done = True
+        action = F.one_hot(torch.LongTensor([0]), num_classes=env.action_space.n).to(device)
+        reward = torch.zeros(1, 1).to(device)
 
-        while not stop_event.is_set():
+        # while not stop_event.is_set():
+        while global_steps.value <= params["max_steps"]:
             optimizer.zero_grad()
             local_model.load_state_dict(global_model.state_dict())
             eps_length = 0
@@ -98,8 +100,6 @@ def train(
             if done:
                 state, info = env.reset()
                 state = preprocessing(state)
-                action = F.one_hot(torch.LongTensor([0]), num_classes=env.action_space.n).to(device)
-                reward = torch.zeros(1, 1).to(device)
                 hx = torch.zeros(1, params["hidden_size"]).to(device)
                 cx = torch.zeros(1, params["hidden_size"]).to(device)
             else:
@@ -195,7 +195,7 @@ def train(
             )
 
             total_loss.backward()
-            nn.utils.clip_grad_norm_(local_model.parameters(), 40)
+            nn.utils.clip_grad_norm_(local_model.parameters(), 0.5)
             ensure_share_grads(
                 local_model=local_model, global_model=global_model, device=device
             )
@@ -207,8 +207,6 @@ def train(
         print(e)
 
     finally:
-        # with global_block_placed.get_lock():
-        #     global_block_placed.value += (block_placed + episode_blocks) / (num_games + 1)
         env.close()
 
 
@@ -220,18 +218,18 @@ def objective(trial: optuna.Trial):
             "lr": trial.suggest_float("learning rate", 1e-4, 5e-3, log=True),
             "pc_weight": trial.suggest_float("lambda pc", 0.01, 0.1, log=True),
             "beta": trial.suggest_float("entropy coefficient", 5e-4, 1e-2, log=True),
-            # "gamma": trial.suggest_float("dicount factor", 0.9, 0.999, log=True),
             "gamma": 0.99,
             "optimizer": "RMSProp",
-            "device": torch.device("cuda"),
+            "device": torch.device("cpu"),
             "hidden_size": 256,
             "n_actions": env.action_space.n,
             "model_path": "trained_models",
             "input_shape": (84, 84, 3),
             "unroll_steps": 20,
-            "test_episodes": 5,
-            "num_agents": 2,
+            "max_steps": 100_000,
         }
+
+        del env
 
         global_model = UNREAL(
             n_inputs=params["input_shape"],
@@ -247,18 +245,28 @@ def objective(trial: optuna.Trial):
             optimizer = SharedAdam(global_model.parameters(), lr=params["lr"])
         elif params["optimizer"] == "RMSProp":
             optimizer = SharedRMSprop(global_model.parameters(), lr=params["lr"])
-        optimizer.share_memory()
 
         processes = []
-        stop_event = mp.Event()
+        # stop_event = mp.Event()
         global_scores = mp.Value("i", 0)
         global_blocks = mp.Value("i", 0)
         global_lines = mp.Value("i", 0)
         global_tries = mp.Value("i", 0)
         global_steps = mp.Value("i", 0)
-        start_time = time.time()
+        # start_time = time.time()
 
-        for rank in range(params["num_agents"]):
+        progress_process = mp.Process(
+            target=update_progress,
+            args=(
+                global_steps,
+                params["max_steps"],
+            ),
+            kwargs=({"desc": "Total Steps"})
+        )
+        progress_process.start()
+        processes.append(progress_process)
+
+        for rank in range(mp.cpu_count()):
             p = mp.Process(
                 target=train,
                 args=(
@@ -271,35 +279,34 @@ def objective(trial: optuna.Trial):
                     global_blocks,
                     global_lines,
                     global_tries,
-                    stop_event,
-                    trial,
+                    # stop_event,
+                    # trial,
                 ),
             )
             p.start()
             processes.append(p)
 
-        train_time = 3600
-        with tqdm(total=train_time, desc=f"Trial {trial.number}", unit="s") as pbar:
-            pbar.update(int(time.time() - start_time))
-            while time.time() - start_time < train_time:
-                if all(not p.is_alive() for p in processes):
-                    break
-                time.sleep(1)
-                pbar.update(1)
+        # train_time = 3600
+        # with tqdm(total=train_time, desc=f"Trial {trial.number}", unit="s") as pbar:
+        #     pbar.update(int(time.time() - start_time))
+        #     while time.time() - start_time < train_time:
+        #         if all(not p.is_alive() for p in processes):
+        #             break
+        #         time.sleep(1)
+        #         pbar.update(1)
 
-                # Cek apakah trial harus di-prune
-                # if trial.should_prune():
-                #     stop_event.set()
-                #     break
+        #         # Cek apakah trial harus di-prune
+        #         # if trial.should_prune():
+        #         #     stop_event.set()
+        #         #     break
 
-        stop_event.set()
+        # stop_event.set()
 
         for process in processes:
-            process.join(timeout=10)
-            if process.is_alive():
-                process.terminate()
-
-        env.close()
+            process.join()
+            # process.join(timeout=10)
+            # if process.is_alive():
+            #     process.terminate()
 
         # mean_rewards = global_scores.value
         return global_scores.value, global_blocks.value, global_lines.value, global_tries.value
@@ -318,11 +325,11 @@ if __name__ == "__main__":
             logging.StreamHandler(sys.stdout)
         )
         storage = optuna.storages.RDBStorage(
-            url="sqlite:///tuning/tuning_a3c.db",
+            url="sqlite:///tuning/hpo-UNREAL.db",
             engine_kwargs={"connect_args": {"timeout": 30}},
         )
         study = optuna.create_study(
-            study_name="final-unreal",
+            study_name="final",
             storage=storage,
             load_if_exists=True,
             directions=["maximize", "maximize", "maximize", "minimize"]
@@ -335,19 +342,19 @@ if __name__ == "__main__":
         completed_trials = len(
             [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
         )
-        n_trials = 5
+        n_trials = 45
 
         study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
 
-        print("Number of finished trials: ", len(study.trials))
+        # print("Number of finished trials: ", len(study.trials))
 
-        print(f"Number of trials on the Pareto front: {len(study.best_trials)}")
+        # print(f"Number of trials on the Pareto front: {len(study.best_trials)}")
 
         metrics = [
             (0, "scores"),
             (1, "blocks placed"),
             (2, "lines cleared"),
-            # (2, "episodes length"),
+            (3, "game tries"),
         ]
 
         for index, metric_name in metrics:
