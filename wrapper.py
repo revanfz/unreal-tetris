@@ -19,6 +19,7 @@ class FrameSkipWrapper(gym.Wrapper):
             if i != 0 :
                 action = 0
             obs, reward, done, truncated, info = self.env.step(action)
+            reward = 2 * ((reward + 4) / 8) - 1
             total_reward += reward
             if done:
                 break

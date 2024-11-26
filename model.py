@@ -44,7 +44,7 @@ class ConvNet(nn.Module):
 
     def forward(self, observation: torch.Tensor):
         x = self.conv_layer(observation)
-        x = x.view(x.size(0), -1)
+        x = x.reshape(x.size(0), -1)
         return self.fc_layer(x)
 
 
@@ -181,6 +181,7 @@ class UNREAL(nn.Module):
         self.beta = beta
         self.gamma = gamma
         self.device = device
+        self.n_inputs = n_inputs
         self.n_actions = n_actions
 
         self.use_pc = pc
@@ -204,7 +205,7 @@ class UNREAL(nn.Module):
         hidden: Union[tuple, None] = None,
     ):
         conv_feat = self.conv_layer(state)
-        lstm_input = torch.cat([conv_feat, action_oh, reward], dim=1).to(self.device)
+        lstm_input = torch.cat([conv_feat, action_oh, reward], dim=1).type(torch.float32).to(self.device)
         hx, cx = self.lstm_layer(lstm_input, hidden)
         policy, value = self.ac_layer(hx)
         return policy, value, hx, cx
@@ -333,3 +334,95 @@ class UNREAL(nn.Module):
         _, values, _, _ = self.forward(states[:-1], actions_oh[:-1], rewards[:-1])
         loss = F.mse_loss(values, returns)
         return loss
+
+
+    def batch_pc_loss(self, states, rewards, actions, dones, pixel_changes):
+        actions_oh = F.one_hot(actions, self.n_actions).to(self.device)
+
+        R = torch.zeros((20, 20), device=self.device)
+        conv_feat = self.conv_layer(states[:, -1])
+        lstm_input = torch.cat(
+            [conv_feat, actions_oh[:, -1], rewards[:, -1]],
+            dim=1,
+        ).to(self.device)
+        lstm_feat, _ = self.lstm_layer(lstm_input, None)
+        _, R = self.pc_layer(lstm_feat)
+        R = R.detach() * dones[:, -1].unsqueeze(-1)
+
+        states = states[:, :-1].reshape(-1, *states.shape[2:])
+        actions_oh = actions_oh[:, :-1].reshape(-1, *actions_oh.shape[2:])
+        rewards = rewards[:, :-1].reshape(-1, *rewards.shape[2:])
+
+        returns = []
+        for i in reversed(range(pixel_changes.size(1) - 1)):
+            R = pixel_changes[:, i] + 0.9 * ~dones[:, i].unsqueeze(-1) * R
+            returns.insert(0, R)
+        returns = torch.stack(returns, dim=1).to(self.device) # batch 20 20
+        returns = returns.reshape(-1, *returns.shape[2:])
+
+        conv_feat = self.conv_layer(states)
+        lstm_input = torch.cat([conv_feat, actions_oh, rewards], dim=1).to(self.device)
+        lstm_feat, _ = self.lstm_layer(lstm_input, None)
+        q_aux, _ = self.pc_layer(lstm_feat)  # batch 12 20 20
+
+        pc_a_reshape = actions_oh.view(-1, self.n_actions, 1, 1)  # batch 12 1 1
+        q_taken = (q_aux * pc_a_reshape).sum(dim=1)  # batch 20 20
+        pc_loss = F.mse_loss(q_taken, returns)
+        return pc_loss
+
+    def a2c_loss(self, R: torch.Tensor, rewards, values, dones, log_probs, entropy):
+        returns = torch.zeros_like(rewards)
+        for t in reversed(range(rewards.size(0))):
+            returns[t] = R
+
+        advantages = returns - values
+        critic_loss = advantages.pow(2).mean()
+        actor_loss = (
+            -(advantages.detach() - log_probs).mean() - self.beta * entropy.mean()
+        )
+
+        return (actor_loss, critic_loss)
+    
+    def batch_rp_loss(self, states: torch.Tensor, rewards: torch.Tensor):
+        actual_reward = rewards[:, -1]
+        states = states[:, :-1].reshape(-1, *states.shape[2:])
+
+        # states = states[:, :-1].reshape(-1, *states.shape[2:])
+        # 0 for zero reward
+        # 1 for positive reward
+        # 2 for negative reward
+        reward_class = torch.where(actual_reward > 0, 1, torch.where(actual_reward < 0, 2, 0))
+        
+        state_conv_feat = self.conv_layer(states).view(rewards.size(0), -1)
+        reward_prediction = self.rp_layer(state_conv_feat).squeeze()
+        rp_loss = F.cross_entropy(reward_prediction, reward_class.squeeze(1))
+        return rp_loss
+    
+    def batch_vr_loss(self, states: torch.Tensor, rewards: torch.Tensor, actions: torch.Tensor, dones: torch.Tensor):
+        actions_oh = F.one_hot(actions, self.n_actions).to(self.device)
+
+        with torch.no_grad():
+            _, R, _, _ = self.forward(
+                states[:, -1], actions_oh[:, -1], rewards[:, -1]
+            )
+            R = R * dones[:, -1]
+
+        states = states[:, :-1]
+        rewards = rewards[:, :-1]
+        actions_oh = actions_oh[:, :-1]
+
+        returns = []
+        for i in reversed(range(rewards.size(1))):
+            R = rewards[:, i] + self.gamma * ~dones[:, i] * R
+            returns.insert(0, R)
+        returns = torch.stack(returns, dim=1).to(self.device) # batch 20 20
+        returns = returns.reshape(-1, *returns.shape[2:])
+        states = states.reshape(-1, *states.shape[2:])
+        rewards = rewards.reshape(-1, *rewards.shape[2:])
+        actions_oh = actions_oh.reshape(-1, *actions_oh.shape[2:])
+
+        _, values, _, _ = self.forward(
+            states, actions_oh, rewards
+        )
+        vr_loss = F.mse_loss(values, returns)
+        return vr_loss
