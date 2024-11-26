@@ -118,3 +118,13 @@ def pixel_diff(state, new_state, cell_size=4):
     pixel_change = m.reshape(region).mean(-1).mean(1)
 
     return pixel_change
+
+
+def batch_pixel_diff(state, new_state, cell_size=4):
+    diff = np.abs(new_state[:, :, 2:-2, 2:-2] - state[:, :, 2:-2, 2:-2])
+    m = diff.mean(dim=1)
+    n_envs, h, w = m.shape
+    h_cells, w_cells = h // cell_size, w // cell_size
+    reshaped = m.view(n_envs, h_cells, cell_size, w_cells, cell_size)
+    pixel_change = reshaped.mean(dim=(-1, -3))  
+    return pixel_change
