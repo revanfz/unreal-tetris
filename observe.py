@@ -27,7 +27,7 @@ device = torch.device("cpu")
 if __name__ == "__main__":
     env = make_env(resize=84, render_mode="human", level=19, skip=2)
     # checkpoint = torch.load("trained_models/final.pt", weights_only=True)
-    checkpoint = torch.load("trained_models/tuned_checkpoint.tar", weights_only=True)
+    checkpoint = torch.load("trained_models/test_checkpoint.tar", weights_only=True)
 
     local_model = UNREAL(
         n_inputs=(84, 84, 3),
@@ -47,7 +47,7 @@ if __name__ == "__main__":
 
     while True:
         if done:
-            state, info = env.reset()
+            state, info = env.reset(seed=43)
             state = preprocessing(state)
             hx = torch.zeros(1, params["hidden_size"]).to(device)
             cx = torch.zeros(1, params["hidden_size"]).to(device)
@@ -71,9 +71,9 @@ if __name__ == "__main__":
         reward = torch.FloatTensor([[reward]]).to(device)
 
         if done:
-            state, info = env.reset()
-            state = preprocessing(state)
-            hx = torch.zeros(1, params["hidden_size"]).to(device)
-            cx = torch.zeros(1, params["hidden_size"]).to(device)
+            # state, info = env.reset()
+            # state = preprocessing(state)
+            # hx = torch.zeros(1, params["hidden_size"]).to(device)
+            # cx = torch.zeros(1, params["hidden_size"]).to(device)
             print(info)
             break

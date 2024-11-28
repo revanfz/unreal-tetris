@@ -317,6 +317,52 @@ def objective(trial: optuna.Trial):
 
     except Exception as e:
         raise Exception(f"Error {e}")
+    
+def new_objective(trial: optuna.Trial):
+    try:
+        env = make_env(resize=84, render_mode="rgb_array", level=19, skip=2)
+
+        params = {
+            "lr": trial.suggest_float("learning rate", 1e-4, 5e-3, log=True),
+            "pc_weight": trial.suggest_float("lambda pc", 0.01, 0.1, log=True),
+            "beta": trial.suggest_float("entropy coefficient", 5e-4, 1e-2, log=True),
+            "gamma": 0.99,
+            "optimizer": "RMSProp",
+            "device": torch.device("cpu"),
+            "hidden_size": 256,
+            "n_actions": env.action_space.n,
+            "model_path": "trained_models",
+            "input_shape": (84, 84, 3),
+            "unroll_steps": 20,
+            "max_steps": 100_000,
+        }
+
+        del env
+
+        global_model = UNREAL(
+            n_inputs=params["input_shape"],
+            n_actions=params["n_actions"],
+            hidden_size=params["hidden_size"],
+            beta=params["beta"],
+            gamma=params["gamma"],
+            device=torch.device("cpu"),
+        )
+        global_model.share_memory()
+
+        if params["optimizer"] == "Adam":
+            optimizer = SharedAdam(global_model.parameters(), lr=params["lr"])
+        elif params["optimizer"] == "RMSProp":
+            optimizer = SharedRMSprop(global_model.parameters(), lr=params["lr"])
+
+        # mean_rewards = global_scores.value
+        return 0
+
+
+    except KeyboardInterrupt:
+        raise KeyboardInterrupt("Tuning dihentikan.")
+
+    except Exception as e:
+        raise Exception(f"Error {e}")
 
 
 if __name__ == "__main__":
@@ -325,14 +371,15 @@ if __name__ == "__main__":
             logging.StreamHandler(sys.stdout)
         )
         storage = optuna.storages.RDBStorage(
-            url="sqlite:///tuning/hpo-UNREAL.db",
+            url="sqlite:///tuning/hpo-UNREAL-a2c.db",
             engine_kwargs={"connect_args": {"timeout": 30}},
         )
         study = optuna.create_study(
             study_name="final",
             storage=storage,
             load_if_exists=True,
-            directions=["maximize", "maximize", "maximize", "minimize"]
+            # directions=["maximize", "maximize", "maximize", "minimize"]   # UNREAL
+            directions=["maximize"]     # A2CUNREAL
         )
 
         if os.path.isfile("./tuning/sampler.pkl"):
@@ -342,7 +389,7 @@ if __name__ == "__main__":
         completed_trials = len(
             [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
         )
-        n_trials = 45
+        n_trials = 10
 
         study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
 

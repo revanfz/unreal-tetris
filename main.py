@@ -1,6 +1,7 @@
 import os
-
 os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+
 
 import numpy as np
 import torch
@@ -22,14 +23,14 @@ def get_args():
             UNTUK MENGHASILKAN AGEN CERDAS (STUDI KASUS: PERMAINAN TETRIS)
         """
     )
-    parser.add_argument("--lr", type=float, default=0.00024, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=0.00036, help="Learning rate")
     parser.add_argument(
         "--gamma", type=float, default=0.99, help="discount factor for rewards"
     )
     parser.add_argument(
-        "--beta", type=float, default=0.00349, help="entropy coefficient"
+        "--beta", type=float, default=0.00113, help="entropy coefficient"
     )
-    parser.add_argument("--pc-weight", type=float, default=0.03094, help="task weight")
+    parser.add_argument("--pc-weight", type=float, default=0.02336, help="task weight")
     parser.add_argument(
         "--optimizer",
         type=str,
@@ -45,11 +46,11 @@ def get_args():
     parser.add_argument(
         "--save-interval",
         type=int,
-        default=1e4,
+        default=5e3,
         help="jumlah episode sebelum menyimpan checkpoint model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=1e6, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=1e7, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
@@ -75,7 +76,7 @@ def get_args():
     parser.add_argument(
         "--resume-training",
         type=bool,
-        default=False,
+        default=True,
         help="Load weight from previous trained stage",
     )
     args = parser.parse_args()

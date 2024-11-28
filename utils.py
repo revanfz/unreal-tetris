@@ -122,7 +122,7 @@ def pixel_diff(state, new_state, cell_size=4):
 
 
 def batch_pixel_diff(state, new_state, cell_size=4):
-    diff = np.abs(new_state[:, :, 2:-2, 2:-2] - state[:, :, 2:-2, 2:-2])
+    diff = np.abs(new_state[:, :, 2:-2, 2:-2].cpu() - state[:, :, 2:-2, 2:-2].cpu())
     m = diff.mean(dim=1)
     n_envs, h, w = m.shape
     h_cells, w_cells = h // cell_size, w // cell_size
