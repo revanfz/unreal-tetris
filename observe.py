@@ -1,15 +1,9 @@
-from pprint import pp
-import time
 import torch
-import numpy as np
-import torch.nn as nn
 import torch.nn.functional as F
 
 from model import UNREAL
-from optimizer import SharedRMSprop
-from replay_buffer import ReplayBuffer
 from torch.distributions import Categorical
-from utils import make_env, pixel_diff, preprocessing, ensure_share_grads
+from utils import make_env, preprocessing
 
 # params = dict(
 #     lr=0.0005,
@@ -31,8 +25,9 @@ params = dict(
 device = torch.device("cpu")
 
 if __name__ == "__main__":
-    env = make_env(resize=84, render_mode="human", level=18, skip=2)
-    checkpoint = torch.load("trained_models/final.pt", weights_only=True)
+    env = make_env(resize=84, render_mode="human", level=19, skip=2)
+    # checkpoint = torch.load("trained_models/final.pt", weights_only=True)
+    checkpoint = torch.load("trained_models/test_checkpoint.tar", weights_only=True)
 
     local_model = UNREAL(
         n_inputs=(84, 84, 3),
@@ -41,7 +36,7 @@ if __name__ == "__main__":
         device=device,
     )
     local_model.load_state_dict(
-        checkpoint
+        checkpoint["model_state_dict"]
     )
     local_model.eval()
 
@@ -52,7 +47,7 @@ if __name__ == "__main__":
 
     while True:
         if done:
-            state, info = env.reset()
+            state, info = env.reset(seed=43)
             state = preprocessing(state)
             hx = torch.zeros(1, params["hidden_size"]).to(device)
             cx = torch.zeros(1, params["hidden_size"]).to(device)
@@ -61,12 +56,12 @@ if __name__ == "__main__":
             hx = hx.detach()
             cx = cx.detach()
         
-        with torch.no_grad():
-            state_tensor = torch.from_numpy(state).unsqueeze(0).to(device)
-            policy, value, hx, cx = local_model(state_tensor, action, reward, (hx, cx))
+        
+        state_tensor = torch.from_numpy(state).unsqueeze(0).to(device)
+        policy, value, hx, cx = local_model(state_tensor, action, reward, (hx, cx))
 
-            dist = Categorical(probs=policy)
-            action = dist.sample()
+        dist = Categorical(probs=policy)
+        action = dist.sample()
 
         next_state, reward, done, _, info = env.step(action.item())
         state = preprocessing(next_state)
@@ -74,5 +69,11 @@ if __name__ == "__main__":
         reward = torch.FloatTensor([[reward]]).to(device)
 
         if done:
+            # state, info = env.reset()
+            # state = preprocessing(state)
+            # hx = torch.zeros(1, params["hidden_size"]).to(device)
+            # cx = torch.zeros(1, params["hidden_size"]).to(device)
             print(info)
+            total_params = sum(p.numel() for p in local_model.parameters())
+            print(total_params)
             break
