@@ -27,7 +27,7 @@ device = torch.device("cpu")
 if __name__ == "__main__":
     env = make_env(resize=84, render_mode="human", level=19)
     # checkpoint = torch.load("trained_models/final.pt", weights_only=True)
-    checkpoint = torch.load("trained_models/UNREAL_checkpoint.tar", weights_only=True)
+    checkpoint = torch.load("trained_models/UNREAL-heuristic_checkpoint.tar", weights_only=True)
 
     local_model = UNREAL(
         n_inputs=(84, 84, 3),
