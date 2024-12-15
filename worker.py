@@ -19,7 +19,6 @@ def worker(
     global_steps: Synchronized,
     global_episodes: Synchronized,
     global_lines: Synchronized,
-    # global_scores: Synchronized,
     params: Namespace,
     device: torch.device,
 ):
@@ -29,11 +28,13 @@ def worker(
 
         render_mode = "human" if not rank else "rgb_array"
         env = make_env(
-            id="TetrisA-v3", resize=84, render_mode=render_mode, level=level, skip=2
+            id="TetrisA-v3",
+            resize=84,
+            render_mode=render_mode,
+            level=level,
         )
         env.action_space.seed(42 + rank)
 
-        # device = torch.device("cuda")
         local_model = UNREAL(
             n_inputs=(84, 84, 3),
             n_actions=env.action_space.n,
@@ -41,16 +42,18 @@ def worker(
             device=device,
             beta=params.beta,
             gamma=params.gamma,
+            temperature=global_model.temperature,
         )
+        local_model.load_state_dict(global_model.state_dict())
         local_model.train()
 
         experience_replay = ReplayBuffer(2000)
 
         prev_action = F.one_hot(torch.tensor([0]).long(), env.action_space.n).to(device)
         prev_reward = torch.zeros(1, 1, device=device)
-        
+
         if not rank:
-            writer = SummaryWriter(f"{params.log_path}/tuned")
+            writer = SummaryWriter(f"{params.log_path}/UNREAL-heuristic")
             with torch.no_grad():
                 writer.add_graph(
                     local_model,
@@ -64,18 +67,19 @@ def worker(
                         ),
                     ),
                 )
+
         done = True
         while not experience_replay._is_full():
-            with torch.no_grad():
-                if done:
-                    state, info = env.reset(seed=42+rank)
-                    state = preprocessing(state)
-                    hx = torch.zeros(1, params.hidden_size, device=device)
-                    cx = torch.zeros(1, params.hidden_size, device=device)
-                    state_tensor = torch.tensor(state, device=device).float().unsqueeze(0)
+            if done:
+                state, info = env.reset(seed=42 + rank)
+                state = preprocessing(state)
+                hx = torch.zeros(1, params.hidden_size, device=device)
+                cx = torch.zeros(1, params.hidden_size, device=device)
 
-                policy, _, _, _ = local_model(
-                    state_tensor, prev_action, prev_reward, None
+            with torch.no_grad():
+                state_tensor = torch.tensor(state, device=device).float().unsqueeze(0)
+                policy, _, hx, cx = local_model(
+                    state_tensor, prev_action, prev_reward, (hx, cx)
                 )
 
                 dist = Categorical(probs=policy)
@@ -107,16 +111,16 @@ def worker(
             entropies = torch.zeros_like(dones, device=device)
             values = torch.zeros_like(dones, device=device)
 
-            for step in range(params.unroll_steps):
-                if done:
-                    state, info = env.reset(seed=42+rank)
-                    state = preprocessing(state)
-                    hx = torch.zeros(1, params.hidden_size, device=device)
-                    cx = torch.zeros(1, params.hidden_size, device=device)
-                else:
-                    hx = hx.detach()
-                    cx = cx.detach()
+            if done:
+                state, info = env.reset(seed=42 + rank)
+                state = preprocessing(state)
+                hx = torch.zeros(1, params.hidden_size, device=device)
+                cx = torch.zeros(1, params.hidden_size, device=device)
+            else:
+                hx = hx.detach()
+                cx = cx.detach()
 
+            for step in range(params.unroll_steps):
                 state_tensor = torch.from_numpy(state).unsqueeze(0).to(device)
                 policy, value, hx, cx = local_model(
                     state_tensor, action, reward, (hx, cx)
@@ -141,9 +145,7 @@ def worker(
                 rewards[step] = torch.tensor(reward, device=device)
 
                 state = next_state
-                action = F.one_hot(action, num_classes=env.action_space.n).to(
-                    device
-                )
+                action = F.one_hot(action, num_classes=env.action_space.n).to(device)
                 reward = torch.tensor([[reward]], device=device).float()
 
                 with global_steps.get_lock():
@@ -159,6 +161,7 @@ def worker(
                             sum(info["statistics"].values()),
                             global_episodes.value,
                         )
+                    break
 
             # Bootstrapping
             R = 0.0
@@ -172,15 +175,15 @@ def worker(
 
             # Hitung loss A3C
             actor_loss, critic_loss = local_model.a3c_loss(
-                rewards=rewards,
+                rewards=rewards[: step + 1],
                 R=R,
-                dones=dones,
-                log_probs=log_probs,
-                entropies=entropies,
-                values=values,
+                dones=dones[: step + 1],
+                log_probs=log_probs[: step + 1],
+                entropies=entropies[: step + 1],
+                values=values[: step + 1],
             )
-            a3c_loss = actor_loss + critic_loss
-            episode_rewards = sum(rewards)
+            a3c_loss = actor_loss + 0.5 * critic_loss
+            episode_rewards = rewards.sum().cpu().detach()
 
             # Hitung Loss Pixel Control
             # 1.  Sampling replay buffer secara random
@@ -210,9 +213,9 @@ def worker(
             total_loss = a3c_loss + params.pc_weight * pc_loss + rp_loss + vr_loss
 
             total_loss.backward()
-            nn.utils.clip_grad_norm_(local_model.parameters(), 0.5)
+            nn.utils.clip_grad_norm_(local_model.parameters(), params.grad_norm)
             ensure_share_grads(
-                local_model=local_model, global_model=global_model, device=device
+                local_model=local_model, global_model=global_model
             )
             optimizer.step()
 
@@ -246,6 +249,10 @@ def worker(
             current_episodes += 1
             with global_episodes.get_lock():
                 global_episodes.value += 1
+            
+            # if global_steps.value > 1e6 and not temperature_scaling:
+            #     local_model._set_temperature(300.0)
+            #     temperature_scaling = True
 
             if global_episodes.value % params.save_interval == 0:
                 torch.save(
@@ -255,13 +262,14 @@ def worker(
                         "steps": global_steps.value,
                         "episodes": global_episodes.value,
                         "lines": global_lines.value,
-                        # "scores": global_scores.value,
                     },
-                    f"{params.model_path}/tuned_checkpoint.tar",
+                    f"{params.model_path}/UNREAL-heuristic_checkpoint.tar",
                 )
 
         if not rank:
-            torch.save(global_model.state_dict(), f"{params.model_path}/tuned.pt")
+            torch.save(
+                global_model.state_dict(), f"{params.model_path}/UNREAL-heuristic.pt"
+            )
         print(f"Pelatihan agen {rank} selesai")
 
     except KeyboardInterrupt as e:
@@ -285,10 +293,9 @@ def worker(
                     "steps": global_steps.value,
                     "episodes": global_episodes.value,
                     "lines": global_lines.value,
-                    # "scores": global_scores.value,
                 },
-                f"{params.model_path}/tuned_checkpoint.tar",
+                f"{params.model_path}/UNREAL-heuristic_checkpoint.tar",
             )
             writer.close()
         env.close()
-        print(f"Proses pelatihan agen {rank} dihentikan")
+        print(f"\tProses pelatihan agen {rank} dihentikan")

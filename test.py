@@ -1,3 +1,4 @@
+import time
 import torch
 import numpy as np
 import torch.nn as nn
@@ -12,18 +13,26 @@ from torch.distributions import Categorical
 from utils import make_env, pixel_diff, preprocessing, ensure_share_grads
 
 params = dict(
-    lr=0.0001,
-    unroll_steps=32,
-    beta=0.01,
+    lr=0.00036,
+    unroll_steps=20,
+    beta=0.0113,
     gamma=0.99,
     hidden_size=256,
-    pc_weight=1.0,
+    pc_weight=0.02335,
 )
 
 device = torch.device("cpu")
 
 if __name__ == "__main__":
-    env = make_env(resize=84, render_mode="human", level=19, skip=2)
+    env = make_env(
+        resize=84,
+        render_mode="human",
+        level=19,
+        skip=2,
+        id="TetrisA-v3",
+    )
+
+    checkpoint = torch.load(f"./trained_models/UNREAL-tetris_checkpoint.tar", weights_only=True)
 
     global_model = UNREAL(
         n_inputs=(84, 84, 3),
@@ -32,16 +41,19 @@ if __name__ == "__main__":
         device=torch.device("cpu"),
         beta=params["beta"],
         gamma=params["gamma"],
+        temperature=10.0
     )
+    global_model.load_state_dict(checkpoint["model_state_dict"])
     optimizer = SharedRMSprop(global_model.parameters(), params["lr"])
     local_model = UNREAL(
         n_inputs=(84, 84, 3),
         n_actions=env.action_space.n,
         hidden_size=256,
         device=device,
+        temperature=150.0
     )
     local_model.train()
-    experience_replay = ReplayBuffer(2000)
+    experience_replay = ReplayBuffer(500)
 
     state, info = env.reset()
     state = preprocessing(state)
@@ -50,7 +62,8 @@ if __name__ == "__main__":
     hx = torch.zeros(1, params["hidden_size"]).to(device)
     cx = torch.zeros(1, params["hidden_size"]).to(device)
 
-    while not experience_replay._is_full():
+    # while not experience_replay._is_full():
+    for i in range(100):
         with torch.no_grad():
             state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
             policy, value, hx, cx = local_model(
@@ -78,13 +91,15 @@ if __name__ == "__main__":
             cx = torch.zeros(1, params["hidden_size"]).to(device)
 
     done = True
-    
+
     action = F.one_hot(torch.LongTensor([0]), env.action_space.n).to(device)
     reward = torch.zeros(1, 1).to(device)
 
     rewards = []
+    eps_r = 0
 
-    for step in tqdm(range(50000), desc="Testing"):
+    # for step in tqdm(range(50000), desc="Testing"):
+    for step in range(5000):
         optimizer.zero_grad()
         local_model.load_state_dict(global_model.state_dict())
 
@@ -100,14 +115,14 @@ if __name__ == "__main__":
                 state = preprocessing(state)
                 hx = torch.zeros(1, params["hidden_size"], device=device)
                 cx = torch.zeros(1, params["hidden_size"], device=device)
+                eps_r = 0
             else:
                 hx = hx.detach()
                 cx = cx.detach()
 
             state_tensor = torch.from_numpy(state).unsqueeze(0).to(device)
-            policy, value, hx, cx = local_model(
-                state_tensor, action, reward, (hx, cx)
-            )
+            policy, value, hx, cx = local_model(state_tensor, action, reward, (hx, cx))
+            print(policy)
 
             dist = Categorical(probs=policy)
             action = dist.sample()
@@ -115,6 +130,7 @@ if __name__ == "__main__":
             log_prob = dist.log_prob(action)
 
             next_state, reward, done, _, info = env.step(action.cpu().item())
+            eps_r += reward
             next_state = preprocessing(next_state)
             pixel_change = pixel_diff(state, next_state)
             experience_replay.store(
@@ -128,9 +144,7 @@ if __name__ == "__main__":
             rewards[step] = torch.tensor(reward, device=device)
 
             state = next_state
-            action = F.one_hot(action, num_classes=env.action_space.n).to(
-                device
-            )
+            action = F.one_hot(action, num_classes=env.action_space.n).to(device)
             reward = torch.FloatTensor([[reward]]).to(device)
 
         # Bootstrapping
@@ -152,7 +166,7 @@ if __name__ == "__main__":
             entropies=entropies,
             values=values,
         )
-        a3c_loss = actor_loss + critic_loss
+        a3c_loss = actor_loss + 0.5 * critic_loss
         episode_rewards = rewards.sum().detach().cpu().numpy()
 
         # Hitung Loss Pixel Control
@@ -167,9 +181,7 @@ if __name__ == "__main__":
 
         # Hitung Loss Reward Prediction
         # 1. Sampel frame dengan peluang rewarding state = 0.5
-        states, rewards, actions, dones, pixel_changes = (
-            experience_replay.sample_rp()
-        )
+        states, rewards, actions, dones, pixel_changes = experience_replay.sample_rp()
         # 2. Hitung loss reward prediction
         rp_loss = local_model.rp_loss(states, rewards)
 
@@ -202,6 +214,7 @@ if __name__ == "__main__":
             local_model=local_model, global_model=global_model, device=device
         )
         optimizer.step()
+        local_model._set_temperature(max(1.0, local_model.temperature * 0.9999))
 
     # plt.plot(
     #     np.array(rewards)

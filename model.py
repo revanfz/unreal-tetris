@@ -4,9 +4,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from typing import Union
-from torch.distributions import Categorical
-
-from utils import preprocessing
 
 
 class ConvNet(nn.Module):
@@ -84,8 +81,9 @@ class ActorCritic(nn.Module):
         self.policy_layer = nn.Linear(hidden_size, n_actions)
         self.value_layer = nn.Linear(hidden_size, 1)
 
-    def forward(self, lstm_feature: torch.Tensor):
-        policy = F.softmax(self.policy_layer(lstm_feature), dim=-1)
+    def forward(self, lstm_feature: torch.Tensor, temperature: float = 1.0):
+        logits = self.policy_layer(lstm_feature)
+        policy = F.softmax(logits / temperature, dim=-1)
         value = self.value_layer(lstm_feature)
         return policy, value
 
@@ -173,6 +171,7 @@ class UNREAL(nn.Module):
         hidden_size=256,
         beta=0.01,
         gamma=0.99,
+        temperature=1.0,
         pc: bool = True,
         rp: bool = True,
         vr: bool = True
@@ -183,6 +182,7 @@ class UNREAL(nn.Module):
         self.device = device
         self.n_inputs = n_inputs
         self.n_actions = n_actions
+        self.temperature = temperature
 
         self.use_pc = pc
         self.use_rp = rp
@@ -207,7 +207,7 @@ class UNREAL(nn.Module):
         conv_feat = self.conv_layer(state)
         lstm_input = torch.cat([conv_feat, action_oh, reward], dim=1).to(self.device)
         hx, cx = self.lstm_layer(lstm_input, hidden)
-        policy, value = self.ac_layer(hx)
+        policy, value = self.ac_layer(hx, self.temperature)
         return policy, value, hx, cx
 
     def a3c_loss(
@@ -417,3 +417,6 @@ class UNREAL(nn.Module):
         values = values.float()
         vr_loss = F.mse_loss(values, returns)
         return vr_loss
+    
+    def _set_temperature(self, temperature: float):
+        self.temperature = temperature

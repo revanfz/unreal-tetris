@@ -2,8 +2,8 @@ import torch
 import torch.nn.functional as F
 
 from model import UNREAL
+from utils import make_env, preprocessing, pixel_diff
 from torch.distributions import Categorical
-from utils import make_env, preprocessing
 
 # params = dict(
 #     lr=0.0005,
@@ -25,9 +25,9 @@ params = dict(
 device = torch.device("cpu")
 
 if __name__ == "__main__":
-    env = make_env(resize=84, render_mode="human", level=19, skip=2)
+    env = make_env(resize=84, render_mode="human", level=19)
     # checkpoint = torch.load("trained_models/final.pt", weights_only=True)
-    checkpoint = torch.load("trained_models/test_checkpoint.tar", weights_only=True)
+    checkpoint = torch.load("trained_models/UNREAL_checkpoint.tar", weights_only=True)
 
     local_model = UNREAL(
         n_inputs=(84, 84, 3),
@@ -47,7 +47,7 @@ if __name__ == "__main__":
 
     while True:
         if done:
-            state, info = env.reset(seed=43)
+            state, info = env.reset(seed=42)
             state = preprocessing(state)
             hx = torch.zeros(1, params["hidden_size"]).to(device)
             cx = torch.zeros(1, params["hidden_size"]).to(device)
@@ -61,12 +61,17 @@ if __name__ == "__main__":
         policy, value, hx, cx = local_model(state_tensor, action, reward, (hx, cx))
 
         dist = Categorical(probs=policy)
-        action = dist.sample()
+        # action = dist.sample()
+        # if policy[0][1] >= 0.1 or policy[0][2] >= 0.1:
+        print("probs:", policy)
+        action = policy.argmax().unsqueeze(0)
 
         next_state, reward, done, _, info = env.step(action.item())
-        state = preprocessing(next_state)
+        next_state = preprocessing(next_state)
+        pixel_change = pixel_diff(state, next_state)
         action = F.one_hot(action, num_classes=env.action_space.n).to(device)
         reward = torch.FloatTensor([[reward]]).to(device)
+        state = next_state
 
         if done:
             # state, info = env.reset()
@@ -74,6 +79,4 @@ if __name__ == "__main__":
             # hx = torch.zeros(1, params["hidden_size"]).to(device)
             # cx = torch.zeros(1, params["hidden_size"]).to(device)
             print(info)
-            total_params = sum(p.numel() for p in local_model.parameters())
-            print(total_params)
-            break
+            # break

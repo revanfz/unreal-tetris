@@ -4,21 +4,19 @@ import time
 import numpy as np
 
 from tqdm import tqdm
-from torch import device, manual_seed
+from torch import manual_seed
 from gymnasium.wrappers import (
     ResizeObservation,
     GrayscaleObservation,
-    NormalizeObservation,
     FrameStackObservation,
     RecordEpisodeStatistics,
 )
 
 from torch import Tensor, float32
-from wrapper import FrameSkipWrapper, RecordVideo
-# from wrapper import FrameSkipWrapper, RecordVideo
 from torchvision.transforms import v2
 from nes_py.wrappers import JoypadSpace
-from gym_tetris.actions import SIMPLE_MOVEMENT
+from gym_tetris.actions import MOVEMENT
+from wrapper import FrameSkipWrapper, RecordVideo
 from multiprocessing.sharedctypes import Synchronized
 
 
@@ -42,14 +40,13 @@ def make_env(
     grayscale: bool = False,
     resize: int = 0,
     render_mode="rgb_array",
-    skip: int = 2,
+    skip: int = 4,
     framestack: int | None = None,
-    normalize = False,
     record = False,
     path: str | None = "./videos",
     format: str | None = "gif",
     level: int = 0,
-    num_games: int | None = None
+    num_games: int | None = None,
 ):
     
     manual_seed(42)
@@ -60,7 +57,7 @@ def make_env(
     }
 
     env = gym_tetris.make(id, **make_params)
-    env = JoypadSpace(env, SIMPLE_MOVEMENT)
+    env = JoypadSpace(env, MOVEMENT)
     env = FrameSkipWrapper(env, skip=skip)
 
     if grayscale:
@@ -69,13 +66,9 @@ def make_env(
         env = ResizeObservation(env, (resize, resize))
     if framestack:
         env = FrameStackObservation(env, framestack)
-    if normalize:
-        env = NormalizeObservation(env)
     if record:
         env = RecordVideo(env, path, format)
         env = RecordEpisodeStatistics(env, buffer_length=num_games)
-    # else:
-        # env = FrameSkipWrapper(env, 2)
 
     return env
 
@@ -83,7 +76,6 @@ def make_env(
 def ensure_share_grads(
     local_model,
     global_model,
-    device: device,
 ):
     for local_param, global_param in zip(
         local_model.parameters(), global_model.parameters()
@@ -117,7 +109,6 @@ def pixel_diff(state, new_state, cell_size=4):
     m = np.mean(diff, 0)
     region = m.shape[0] // cell_size, cell_size, m.shape[1] // cell_size, cell_size
     pixel_change = m.reshape(region).mean(-1).mean(1)
-
     return pixel_change
 
 

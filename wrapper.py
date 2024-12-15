@@ -1,30 +1,87 @@
 import os
+import time
+import numpy as np
 import gymnasium as gym
 
 from gymnasium import error
-from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
 from moviepy.video.fx.resize import resize
+from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
+
+LINE_REWARDS = {0:0, 1: 40, 2: 100, 3: 300, 4: 1200}
 
 
 class FrameSkipWrapper(gym.Wrapper):
-    def __init__(self, env, skip=3):
+    def __init__(
+        self, env, skip=4,
+    ):
         super().__init__(env)
-        self.skip = skip
         self.env = env
+        self.skip = skip
+        self.blocks = 1
+        self.fitness = 0
+        self.prev_action = 0
+        self.lines = 0
 
     def step(self, action):
         done = False
-        total_reward = 0.0
+        total_rewards = 0.0
+        lines = 0
         for i in range(self.skip):
-            if i != 0 :
-                action = 0
-            obs, reward, done, truncated, info = self.env.step(action)
-            reward = 2 * ((reward + 4) / 8) - 1
-            total_reward += reward
+            if i == 0 and np.random.rand() < 0.25:
+                action_taken = self.prev_action
+            else:
+                action_taken = action
+            obs, _, done, truncated, info = self.env.step(action_taken)
             if done:
+                total_rewards -= 20
                 break
-        return obs, total_reward, done, truncated, info
+        
+        blocks = sum(info["statistics"].values())
+        if self.blocks < blocks:
+            total_rewards += self.reward_func()
+            self.blocks = blocks
+        lines = info['number_of_lines']
+        if self.lines < lines:
+            total_rewards += LINE_REWARDS[lines] + 0.76 * lines
+            self.lines = lines
+        self.prev_action = action_taken
+
+        return obs, total_rewards, done, truncated, info
     
+
+    def reset(self, seed=None, options=None):
+        self.lines = 0
+        self.blocks = 1
+        self.fitness = 0
+        self.prev_action = 0
+        return self.env.reset(seed=seed, options=options)
+
+    def uneven_penalty(self, board: np.ndarray):
+        board_height = (20 - np.argmax(board != 0, axis=0)) * (board.any(axis=0))
+        bumpiness = np.abs(np.diff(board_height))
+        height_penalty = self.env.unwrapped._board_height * -0.51
+        bumpiness_penalty = bumpiness.sum() * -0.18
+        return height_penalty, bumpiness_penalty
+
+    def hole_penalty(self, board):
+        filled_above = np.maximum.accumulate(board != 0, axis=0)
+        holes = np.sum((filled_above & (board == 0)))
+        return holes * -0.36
+    
+    def fitness_function(self):
+        board = self.env.unwrapped._board
+        board[board == 239] = 0
+        hp, bp = self.uneven_penalty(board)  # height penalty, bumpiness penalty
+        hole_penalty = self.hole_penalty(board)
+        return hp + hole_penalty + bp
+    
+    def reward_func(self):
+        fitness_value = self.fitness_function()
+        reward = fitness_value - self.fitness
+        self.fitness = fitness_value
+        return reward
+
+
 
 class RecordVideo(gym.Wrapper):
     def __init__(self, env, path: str, format: str):
@@ -45,12 +102,14 @@ class RecordVideo(gym.Wrapper):
             self.close()
             self.episode += 1
         return obs, reward, done, truncated, info
-    
+
     def close(self):
         if len(self.frame_captured) > 0:
             if self.format in ["mp4", "avi", "webm", "ogv", "gif"]:
                 filename = "{}/{}.{}".format(self.path, self.episode, self.format)
-                clip = ImageSequenceClip(self.frame_captured, fps=self.env.metadata.get("fps", 60)).fx(resize, width=480)
+                clip = ImageSequenceClip(
+                    self.frame_captured, fps=self.env.metadata.get("fps", 60)
+                ).fx(resize, width=480)
                 if self.format == "gif":
                     clip.write_gif(filename)
                 else:

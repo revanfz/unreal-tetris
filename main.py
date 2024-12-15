@@ -2,17 +2,18 @@ import os
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 
-
-import numpy as np
+import time
 import torch
 import argparse
+import numpy as np
 import torch.multiprocessing as mp
 
+from tqdm import tqdm
 from pprint import pp
 from model import UNREAL
 from worker import worker
 from utils import make_env, update_progress
-from optimizer import SharedAdam, SharedRMSprop
+from optimizer import SharedRMSprop, SharedAdam
 
 
 def get_args():
@@ -23,20 +24,15 @@ def get_args():
             UNTUK MENGHASILKAN AGEN CERDAS (STUDI KASUS: PERMAINAN TETRIS)
         """
     )
-    parser.add_argument("--lr", type=float, default=0.00036, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=0.00060361, help="Learning rate")
     parser.add_argument(
-        "--gamma", type=float, default=0.99, help="discount factor for rewards"
+        "--gamma", type=float, default=0.95, help="discount factor for rewards"
     )
     parser.add_argument(
-        "--beta", type=float, default=0.00113, help="entropy coefficient"
+        "--beta", type=float, default=0.00197699, help="entropy coefficient"
     )
-    parser.add_argument("--pc-weight", type=float, default=0.02336, help="task weight")
-    parser.add_argument(
-        "--optimizer",
-        type=str,
-        default="rmsprop",
-        help="optimizer yang digunakan",
-    )
+    parser.add_argument("--pc-weight", type=float, default=0.00852844, help="task weight")
+    parser.add_argument("--grad-norm", type=float, default=0.5, help="Gradient norm clipping")
     parser.add_argument(
         "--unroll-steps",
         type=int,
@@ -50,10 +46,16 @@ def get_args():
         help="jumlah episode sebelum menyimpan checkpoint model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=1e7, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=1e6, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
+    )
+    parser.add_argument(
+        "--optimizer",
+        type=str,
+        default="rmsprop",
+        help="optimizer yang digunakan",
     )
     parser.add_argument(
         "--num-agents",
@@ -101,10 +103,11 @@ def train(params: argparse.Namespace) -> None:
             hidden_size=params.hidden_size,
             beta=params.beta,
             gamma=params.gamma,
+            temperature=1.0,
         )
         global_model.share_memory()
         global_model.train()
-
+        
         if opt.optimizer == "adam":
             optimizer = SharedAdam(global_model.parameters(), lr=params.lr)
         elif opt.optimizer == "rmsprop":
@@ -114,20 +117,20 @@ def train(params: argparse.Namespace) -> None:
         global_steps = mp.Value("i", 0)
         global_episodes = mp.Value("i", 0)
         global_lines = mp.Value("i", 0)
-        # global_scores = mp.Value("i", 0)
+
+        load_model = False
 
         if opt.resume_training:
             if os.path.isdir(opt.model_path):
-                load_model = True
-                file_ = f"{opt.model_path}/tuned_checkpoint.tar"
+                file_ = f"{opt.model_path}/UNREAL-heuristic_checkpoint.tar"
                 if os.path.isfile(file_):
+                    load_model = True
                     checkpoint = torch.load(file_, weights_only=True)
                     global_model.load_state_dict(checkpoint["model_state_dict"])
                     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
                     global_steps = mp.Value("i", checkpoint["steps"])
                     global_episodes = mp.Value("i", checkpoint["episodes"])
                     global_lines = mp.Value("i", checkpoint["lines"])
-                    # global_scores = mp.Value("i", checkpoint["scores"])
                     print(
                         f"Resuming training for previous model, state: Steps {checkpoint['steps']}, Episodes: {checkpoint['episodes']}"
                     )
@@ -137,8 +140,6 @@ def train(params: argparse.Namespace) -> None:
                 print("Membuat direktori model...")
                 os.makedirs(opt.model_path)
                 print("Memulai training...")
-        else:
-            load_model = False
 
         pp(opt)
         progress_process = mp.Process(
@@ -154,12 +155,13 @@ def train(params: argparse.Namespace) -> None:
                         "Resuming Training. Total Steps"
                         if load_model
                         else "Total Steps"
-                    )
+                    ),
+                    "unit": "steps"
                 }
             ),
         )
         progress_process.start()
-        processes.append(progress_process)
+        processes.append(progress_process) 
 
         for rank in range(params.num_agents):
             process = mp.Process(
@@ -171,13 +173,25 @@ def train(params: argparse.Namespace) -> None:
                     global_steps,
                     global_episodes,
                     global_lines,
-                    # global_scores,
                     params,
                     device,
                 ),
             )
             process.start()
             processes.append(process)
+
+        # with tqdm(
+        #     total=opt.max_steps - global_steps.value if load_model else opt.max_steps,
+        #     desc=f"{'Resuming ' if load_model else ''}Training model",
+        #     unit="steps",
+        # ) as pbar:
+        #     while any(p.is_alive() for p in processes):
+        #         with global_steps.get_lock():
+        #             pbar.n = global_steps.value - (
+        #                 checkpoint["steps"] if load_model else 0
+        #             )
+        #             pbar.refresh()
+        #         time.sleep(0.1)
 
         for process in processes:
             process.join()
@@ -186,9 +200,6 @@ def train(params: argparse.Namespace) -> None:
         print("Multiprocessing dihentikan...")
         raise KeyboardInterrupt(f"Program dihentikan")
 
-    except Exception as e:
-        raise Exception(f"{e}")
-
     finally:
         for process in processes:
             process.terminate()
@@ -196,18 +207,14 @@ def train(params: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     try:
-        done = True
+        done = False
         mp.set_start_method("spawn")
         opt = get_args()
         train(opt)
+        done = True
 
     except KeyboardInterrupt as e:
-        done = False
         print("Program dihentikan...")
-
-    except Exception as e:
-        done = False
-        print(f"Error:\t{e} :X")
 
     finally:
         print(f"Pelatihan {'selesai' if done else 'gagal'}.")
