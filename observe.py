@@ -25,15 +25,16 @@ params = dict(
 device = torch.device("cpu")
 
 if __name__ == "__main__":
-    env = make_env(resize=84, render_mode="human", level=19)
+    env = make_env(resize=84, render_mode="human", level=19, skip=2)
     # checkpoint = torch.load("trained_models/final.pt", weights_only=True)
-    checkpoint = torch.load("trained_models/UNREAL-heuristic_checkpoint.tar", weights_only=True)
+    checkpoint = torch.load("trained_models/UNREAL_checkpoint.tar", weights_only=True)
 
     local_model = UNREAL(
         n_inputs=(84, 84, 3),
         n_actions=env.action_space.n,
         hidden_size=256,
         device=device,
+        # temperature=2.0
     )
     local_model.load_state_dict(
         checkpoint["model_state_dict"]
@@ -47,7 +48,7 @@ if __name__ == "__main__":
 
     while True:
         if done:
-            state, info = env.reset(seed=42)
+            state, info = env.reset()
             state = preprocessing(state)
             hx = torch.zeros(1, params["hidden_size"]).to(device)
             cx = torch.zeros(1, params["hidden_size"]).to(device)
@@ -63,7 +64,7 @@ if __name__ == "__main__":
         dist = Categorical(probs=policy)
         # action = dist.sample()
         # if policy[0][1] >= 0.1 or policy[0][2] >= 0.1:
-        print("probs:", policy)
+        # print("probs:", policy)
         action = policy.argmax().unsqueeze(0)
 
         next_state, reward, done, _, info = env.step(action.item())

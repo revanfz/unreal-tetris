@@ -32,6 +32,7 @@ def worker(
             resize=84,
             render_mode=render_mode,
             level=level,
+            skip=2,
         )
         env.action_space.seed(42 + rank)
 
@@ -42,7 +43,6 @@ def worker(
             device=device,
             beta=params.beta,
             gamma=params.gamma,
-            temperature=global_model.temperature,
         )
         local_model.load_state_dict(global_model.state_dict())
         local_model.train()
@@ -53,7 +53,7 @@ def worker(
         prev_reward = torch.zeros(1, 1, device=device)
 
         if not rank:
-            writer = SummaryWriter(f"{params.log_path}/UNREAL-heuristic")
+            writer = SummaryWriter(f"{params.log_path}/UNREAL")
             with torch.no_grad():
                 writer.add_graph(
                     local_model,
@@ -249,10 +249,6 @@ def worker(
             current_episodes += 1
             with global_episodes.get_lock():
                 global_episodes.value += 1
-            
-            # if global_steps.value > 1e6 and not temperature_scaling:
-            #     local_model._set_temperature(300.0)
-            #     temperature_scaling = True
 
             if global_episodes.value % params.save_interval == 0:
                 torch.save(
@@ -263,12 +259,12 @@ def worker(
                         "episodes": global_episodes.value,
                         "lines": global_lines.value,
                     },
-                    f"{params.model_path}/UNREAL-heuristic_checkpoint.tar",
+                    f"{params.model_path}/UNREAL_checkpoint.tar",
                 )
 
         if not rank:
             torch.save(
-                global_model.state_dict(), f"{params.model_path}/UNREAL-heuristic.pt"
+                global_model.state_dict(), f"{params.model_path}/UNREAL.pt"
             )
         print(f"Pelatihan agen {rank} selesai")
 
@@ -294,7 +290,7 @@ def worker(
                     "episodes": global_episodes.value,
                     "lines": global_lines.value,
                 },
-                f"{params.model_path}/UNREAL-heuristic_checkpoint.tar",
+                f"{params.model_path}/UNREAL_checkpoint.tar",
             )
             writer.close()
         env.close()

@@ -1,13 +1,10 @@
 import os
 os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
 
-import time
 import numpy as np
 import pandas as pd
 import torch.multiprocessing as mp
 
-from tqdm import tqdm
 from model import UNREAL
 from utils import make_env, update_progress
 from torch.nn.functional import one_hot
@@ -20,7 +17,7 @@ from torch import device, load, from_numpy, tensor, zeros, zeros_like, no_grad
 TEST_CASE = 10
 EVAL_PATH = "./"
 TEST_LENGTH = 1_000_000
-MODEL_PATH = "./trained_models/UNREAL-tetris.pt"
+MODEL_PATH = "./trained_models/UNREAL.pt"
 CSV_PATH = "./UNREAL-eval"
 if not os.path.isdir(CSV_PATH):
     os.makedirs(CSV_PATH)
@@ -59,6 +56,7 @@ def agent(
     with no_grad():
         while global_steps.value <= max_steps:
             if done:
+                action_taken = list()
                 state, info = env.reset()
                 hx = zeros(1, 256, device=device)
                 cx = zeros_like(hx, device=device)
@@ -71,6 +69,7 @@ def agent(
             action = dist.sample()
 
             state, reward, done, _, info = env.step(action.item())
+            action_taken.append(action.item())
             action = one_hot(action, num_classes=MODEL.n_actions).to(device)
             reward = tensor([[reward]], device=device).float()
 
@@ -78,7 +77,7 @@ def agent(
                 global_steps.value += 1
 
             if done:
-                queue.put(np.array([info['episode']['r'], sum(info["statistics"].values()), info['episode']['l'], info['episode']['t']]))
+                queue.put(np.array([info['episode']['r'], sum(info["statistics"].values()), info['episode']['l'], info['episode']['t'], action_taken], dtype=object))
     queue.put(None)
 
 
@@ -133,7 +132,7 @@ if __name__ == "__main__":
                 process.join()          
 
             data = np.array(all_data)
-            df = pd.DataFrame(data, columns=["rewards", "blocks", "episode length", "survival time"])
+            df = pd.DataFrame(data, columns=["rewards", "blocks", "episode length", "survival time", "action sequence"])
             df.to_csv(f"{CSV_PATH}/{test}.csv", index=False)
 
     except KeyboardInterrupt as e:
