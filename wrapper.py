@@ -8,6 +8,7 @@ from moviepy.video.fx.resize import resize
 from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
 
 LINE_REWARDS = {1: 40, 2: 100, 3: 300, 4: 1200}
+LINE_REWARDS = {1: 40, 2: 100, 3: 300, 4: 1200}
 
 
 class FrameSkipWrapper(gym.Wrapper):
@@ -48,6 +49,15 @@ class FrameSkipWrapper(gym.Wrapper):
                 total_rewards -= 20
                 break
         
+        blocks = sum(info["statistics"].values())
+        if self.blocks < blocks:
+            total_rewards += self.reward_func() + rotation_reward
+            self.blocks = blocks
+        lines = info['number_of_lines']
+        if self.lines < lines:
+            lines_cleared = lines - self.lines
+            total_rewards += LINE_REWARDS[lines_cleared] + 0.76 * lines_cleared
+            self.lines += lines_cleared
         blocks = sum(info["statistics"].values())
         if self.blocks < blocks:
             total_rewards += self.reward_func() + rotation_reward
