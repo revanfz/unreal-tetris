@@ -8,7 +8,6 @@ from moviepy.video.fx.resize import resize
 from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
 
 LINE_REWARDS = {1: 40, 2: 100, 3: 300, 4: 1200}
-LINE_REWARDS = {1: 40, 2: 100, 3: 300, 4: 1200}
 
 
 class FrameSkipWrapper(gym.Wrapper):
@@ -40,7 +39,7 @@ class FrameSkipWrapper(gym.Wrapper):
                 else:
                     total_rewards -= 0.1
             if done:
-            #     total_rewards -= 20
+                total_rewards -= 20
                 break
         
         blocks = sum(info["statistics"].values())
