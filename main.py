@@ -44,7 +44,7 @@ def get_args():
         help="jumlah episode sebelum menyimpan checkpoint model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=1e7, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=2e6, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
@@ -119,7 +119,7 @@ def train(params: argparse.Namespace) -> None:
 
         if opt.resume_training:
             if os.path.isdir(opt.model_path):
-                file_ = f"{opt.model_path}/UNREAL_checkpoint.tar"
+                file_ = f"{opt.model_path}/UNREAL-heuristic_checkpoint.tar"
                 if os.path.isfile(file_):
                     load_model = True
                     checkpoint = torch.load(file_, weights_only=True)

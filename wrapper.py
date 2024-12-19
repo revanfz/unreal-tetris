@@ -21,11 +21,22 @@ class FrameSkipWrapper(gym.Wrapper):
         self.blocks = 1
         self.fitness = 0
         self.prev_action = 0
+        self.is_prev_rotate = False
 
     def step(self, action):
         done = False
         total_rewards = 0.0
         rotation_reward = 0.0
+
+        if action in [1, 2, 4, 5, 7, 8, 10, 11]:
+            if self.env.unwrapped._current_piece != 'O' and not self.is_prev_rotate:
+                rotation_reward += 1
+                self.is_prev_rotate = True
+            else:
+                total_rewards -= 0.5
+        else:
+            self.is_prev_rotate = False
+
         for i in range(self.skip):
             if i == 0 and np.random.rand() < (1/self.skip):
                 action_taken = self.prev_action
@@ -33,15 +44,10 @@ class FrameSkipWrapper(gym.Wrapper):
                 action_taken = action
             obs, reward, done, truncated, info = self.env.step(action_taken)
             total_rewards += reward
-            if action in [1, 2, 4, 5, 7, 8, 10, 11]:
-                if info['current_piece'] != 'O':
-                    rotation_reward += 0.5
-                else:
-                    total_rewards -= 0.1
             if done:
                 total_rewards -= 20
                 break
-        
+
         blocks = sum(info["statistics"].values())
         if self.blocks < blocks:
             total_rewards += self.reward_func() + rotation_reward
@@ -60,12 +66,13 @@ class FrameSkipWrapper(gym.Wrapper):
         self.blocks = 1
         self.fitness = 0
         self.prev_action = 0
+        self.is_prev_rotate = False
         return self.env.reset(seed=seed, options=options)
 
     def uneven_penalty(self, board: np.ndarray):
         board_height = (20 - np.argmax(board != 0, axis=0)) * (board.any(axis=0))
         bumpiness = np.abs(np.diff(board_height))
-        height_penalty = self.env.unwrapped._board_height * -2.51
+        height_penalty = board_height.sum() * -0.51
         bumpiness_penalty = bumpiness.sum() * -0.18
         return height_penalty, bumpiness_penalty
 

@@ -53,7 +53,7 @@ def worker(
         prev_reward = torch.zeros(1, 1, device=device)
 
         if not rank:
-            writer = SummaryWriter(f"{params.log_path}/UNREAL")
+            writer = SummaryWriter(f"{params.log_path}/UNREAL-heuristic")
             with torch.no_grad():
                 writer.add_graph(
                     local_model,
@@ -259,12 +259,12 @@ def worker(
                         "episodes": global_episodes.value,
                         "lines": global_lines.value,
                     },
-                    f"{params.model_path}/UNREAL_checkpoint.tar",
+                    f"{params.model_path}/UNREAL-heuristic_checkpoint.tar",
                 )
 
         if not rank:
             torch.save(
-                global_model.state_dict(), f"{params.model_path}/UNREAL.pt"
+                global_model.state_dict(), f"{params.model_path}/UNREAL-heuristic.pt"
             )
         print(f"Pelatihan agen {rank} selesai")
 
@@ -290,7 +290,7 @@ def worker(
                     "episodes": global_episodes.value,
                     "lines": global_lines.value,
                 },
-                f"{params.model_path}/UNREAL_checkpoint.tar",
+                f"{params.model_path}/UNREAL-heuristic_checkpoint.tar",
             )
             writer.close()
         env.close()

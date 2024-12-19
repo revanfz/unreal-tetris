@@ -49,14 +49,13 @@ Buat environment _python_ berdasarkan file ```environment.yml```
 ## How to use
 ```bash
 usage: main.py 
-               Implementation model UNREAL:
-               IMPLEMENTASI ARSITEKTUR UNSUPERVISED REINFORCEMENT WITH AUXILIARY LEARNING (UNREAL)
-               UNTUK MENGHASILKAN AGEN CERDAS (STUDI KASUS: PERMAINAN TETRIS)
-
-               [-h] [--lr LR] [--gamma GAMMA] [--beta BETA] [--pc-weight PC_WEIGHT] [--grad-norm GRAD_NORM]
-               [--unroll-steps UNROLL_STEPS] [--save-interval SAVE_INTERVAL] [--max-steps MAX_STEPS]
-               [--hidden-size HIDDEN_SIZE] [--optimizer OPTIMIZER] [--num-agents NUM_AGENTS] [--log-path LOG_PATH]
-               [--model-path MODEL_PATH] [--resume-training RESUME_TRAINING]
+       Implementation model UNREAL:
+       IMPLEMENTASI ARSITEKTUR UNSUPERVISED REINFORCEMENT WITH AUXILIARY LEARNING (UNREAL)
+       UNTUK MENGHASILKAN AGEN CERDAS (STUDI KASUS: PERMAINAN TETRIS)
+       [-h] [--lr LR] [--gamma GAMMA] [--beta BETA] [--pc-weight PC_WEIGHT] [--grad-norm GRAD_NORM]
+       [--unroll-steps UNROLL_STEPS] [--save-interval SAVE_INTERVAL] [--max-steps MAX_STEPS]
+       [--hidden-size HIDDEN_SIZE] [--optimizer OPTIMIZER] [--num-agents NUM_AGENTS] [--log-path LOG_PATH]
+       [--model-path MODEL_PATH] [--resume-training RESUME_TRAINING]
 
 options:
   -h, --help                        show this help message and exit
