@@ -7,7 +7,7 @@ from gymnasium import error
 from moviepy.video.fx.resize import resize
 from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
 
-LINE_REWARDS = {0:0, 1: 40, 2: 100, 3: 300, 4: 1200}
+LINE_REWARDS = {1: 40, 2: 100, 3: 300, 4: 1200}
 
 
 class FrameSkipWrapper(gym.Wrapper):
@@ -17,35 +17,41 @@ class FrameSkipWrapper(gym.Wrapper):
         super().__init__(env)
         self.env = env
         self.skip = skip
+        self.lines = 0
         self.blocks = 1
         self.fitness = 0
         self.prev_action = 0
-        self.lines = 0
 
     def step(self, action):
         done = False
         total_rewards = 0.0
-        lines = 0
+        rotation_reward = 0.0
         for i in range(self.skip):
-            if i == 0 and np.random.rand() < 0.25:
+            if i == 0 and np.random.rand() < (1/self.skip):
                 action_taken = self.prev_action
             else:
                 action_taken = action
-            obs, _, done, truncated, info = self.env.step(action_taken)
+            obs, reward, done, truncated, info = self.env.step(action_taken)
+            total_rewards += reward
+            if action in [1, 2, 4, 5, 7, 8, 10, 11]:
+                if info['current_piece'] != 'O':
+                    rotation_reward += 0.5
+                else:
+                    total_rewards -= 0.1
             if done:
                 total_rewards -= 20
                 break
         
         blocks = sum(info["statistics"].values())
         if self.blocks < blocks:
-            total_rewards += self.reward_func()
+            total_rewards += self.reward_func() + rotation_reward
             self.blocks = blocks
         lines = info['number_of_lines']
         if self.lines < lines:
-            total_rewards += LINE_REWARDS[lines] + 0.76 * lines
-            self.lines = lines
+            lines_cleared = lines - self.lines
+            total_rewards += LINE_REWARDS[lines_cleared] + 0.76 * lines_cleared
+            self.lines += lines_cleared
         self.prev_action = action_taken
-
         return obs, total_rewards, done, truncated, info
     
 
@@ -59,7 +65,7 @@ class FrameSkipWrapper(gym.Wrapper):
     def uneven_penalty(self, board: np.ndarray):
         board_height = (20 - np.argmax(board != 0, axis=0)) * (board.any(axis=0))
         bumpiness = np.abs(np.diff(board_height))
-        height_penalty = self.env.unwrapped._board_height * -0.51
+        height_penalty = self.env.unwrapped._board_height * -2.51
         bumpiness_penalty = bumpiness.sum() * -0.18
         return height_penalty, bumpiness_penalty
 
@@ -67,12 +73,13 @@ class FrameSkipWrapper(gym.Wrapper):
         filled_above = np.maximum.accumulate(board != 0, axis=0)
         holes = np.sum((filled_above & (board == 0)))
         return holes * -0.36
-    
+   
     def fitness_function(self):
         board = self.env.unwrapped._board
         board[board == 239] = 0
         hp, bp = self.uneven_penalty(board)  # height penalty, bumpiness penalty
         hole_penalty = self.hole_penalty(board)
+        # print(f"Height penalty {hp}, Bumpiness penalty  {bp}, Hole penalty {hole_penalty}")
         return hp + hole_penalty + bp
     
     def reward_func(self):

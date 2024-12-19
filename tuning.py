@@ -53,8 +53,6 @@ def train(
     global_blocks: Synchronized,
     global_lines: Synchronized,
     global_tries: Synchronized,
-    # stop_event: Event,
-    # trial: optuna.Trial,
 ) -> None:
     try:
         device = params["device"]
@@ -64,6 +62,7 @@ def train(
             render_mode="rgb_array",
             id="TetrisA-v3",
             level=19,
+            skip=2
         )
 
         local_model = UNREAL(
@@ -223,9 +222,9 @@ def train(
             # Penjumlahan loss a3c, pixel control, value replay dan reward prediction
             total_loss = a3c_loss + params["pc_weight"] * pc_loss + rp_loss + vr_loss
             total_loss.backward()
-            nn.utils.clip_grad_norm_(local_model.parameters(), 0.5)
+            nn.utils.clip_grad_norm_(local_model.parameters(), params["grad_norm"])
             ensure_share_grads(
-                local_model=local_model, global_model=global_model, device=device
+                local_model=local_model, global_model=global_model,
             )
             optimizer.step()
 
@@ -240,133 +239,20 @@ def train(
 
 def objective(trial: optuna.Trial):
     try:
-        env = make_env(resize=84, render_mode="rgb_array", level=19, skip=2)
-
-        params = {
-            "lr": trial.suggest_float("learning rate", 1e-4, 5e-3, log=True),
-            "pc_weight": trial.suggest_float("lambda pc", 0.01, 0.1, log=True),
-            "beta": trial.suggest_float("entropy coefficient", 5e-4, 1e-2, log=True),
-            "gamma": 0.99,
-            "optimizer": "RMSProp",
-            "device": torch.device("cpu"),
-            "hidden_size": 256,
-            "n_actions": env.action_space.n,
-            "model_path": "trained_models",
-            "input_shape": (84, 84, 3),
-            "unroll_steps": 20,
-            "max_steps": 100_000,
-        }
-
-        del env
-
-        global_model = UNREAL(
-            n_inputs=params["input_shape"],
-            n_actions=params["n_actions"],
-            hidden_size=params["hidden_size"],
-            beta=params["beta"],
-            gamma=params["gamma"],
-            device=torch.device("cpu"),
-        )
-        global_model.share_memory()
-
-        if params["optimizer"] == "Adam":
-            optimizer = SharedAdam(global_model.parameters(), lr=params["lr"])
-        elif params["optimizer"] == "RMSProp":
-            optimizer = SharedRMSprop(global_model.parameters(), lr=params["lr"])
-
-        processes = []
-        # stop_event = mp.Event()
-        global_rewards = mp.Value("f", 0.0)
-        global_blocks = mp.Value("i", 0)
-        global_lines = mp.Value("i", 0)
-        global_tries = mp.Value("i", 0)
-        global_steps = mp.Value("i", 0)
-        # start_time = time.time()
-
-        progress_process = mp.Process(
-            target=update_progress,
-            args=(
-                global_steps,
-                params["max_steps"],
-            ),
-            kwargs=({"desc": "Total Steps"}),
-        )
-        progress_process.start()
-        processes.append(progress_process)
-
-        for rank in range(mp.cpu_count()):
-            p = mp.Process(
-                target=train,
-                args=(
-                    rank,
-                    params,
-                    global_model,
-                    optimizer,
-                    global_steps,
-                    global_rewards,
-                    global_blocks,
-                    global_lines,
-                    global_tries,
-                    # stop_event,
-                    # trial,
-                ),
-            )
-            p.start()
-            processes.append(p)
-
-        # train_time = 3600
-        # with tqdm(total=train_time, desc=f"Trial {trial.number}", unit="s") as pbar:
-        #     pbar.update(int(time.time() - start_time))
-        #     while time.time() - start_time < train_time:
-        #         if all(not p.is_alive() for p in processes):
-        #             break
-        #         time.sleep(1)
-        #         pbar.update(1)
-
-        #         # Cek apakah trial harus di-prune
-        #         # if trial.should_prune():
-        #         #     stop_event.set()
-        #         #     break
-
-        # stop_event.set()
-
-        for process in processes:
-            process.join()
-            # process.join(timeout=10)
-            # if process.is_alive():
-            #     process.terminate()
-            process.join()
-        return (
-            global_rewards.value / global_tries.value,
-            global_blocks.value / global_tries.value,
-            global_lines.value,
-            global_tries.value,
-        )
-
-    except KeyboardInterrupt:
-        raise KeyboardInterrupt("Tuning dihentikan.")
-
-    except Exception as e:
-        raise Exception(f"Error {e}")
-
-
-def new_objective(trial: optuna.Trial):
-    try:
         env = make_env(
             resize=84,
             render_mode="rgb_array",
             level=19,
             skip=4,
-            # id="TetrisA-v3",
-            # reward_shaping=True,
-            # heuristic=True,
         )
 
         params = {
             "lr": trial.suggest_float("learning rate", 1e-4, 5e-3, log=True),
             "pc_weight": trial.suggest_float("lambda pc", 0.01, 0.1, log=True),
             "beta": trial.suggest_float("entropy coefficient", 5e-4, 1e-2, log=True),
-            "gamma": 0.99,
+            "gamma": trial.suggest_categorical("discount factor", [0.95, 0.99]),
+            "grad_norm": trial.suggest_categorical("gradient clipping", [0.5, 40]),
+            # "gamma": 0.99,
             "optimizer": "RMSProp",
             "device": torch.device("cpu"),
             "hidden_size": 256,
@@ -401,6 +287,17 @@ def new_objective(trial: optuna.Trial):
         global_tries = mp.Value("i", 0)
         global_steps = mp.Value("i", 0)
 
+        progress_process = mp.Process(
+            target=update_progress,
+            args=(
+                global_steps,
+                params["max_steps"],
+            ),
+            kwargs=({"desc": "Total Steps", "unit": "steps"}),
+        )
+        progress_process.start()
+        processes.append(progress_process)
+
         for rank in range(mp.cpu_count()):
             p = mp.Process(
                 target=train,
@@ -418,13 +315,6 @@ def new_objective(trial: optuna.Trial):
             )
             p.start()
             processes.append(p)
-
-        with tqdm(total=params["max_steps"], desc="Tuning model", unit="step") as pbar:
-            while any(p.is_alive() for p in processes):
-                with global_steps.get_lock():
-                    pbar.n = global_steps.value
-                    pbar.refresh()
-                time.sleep(0.1)
 
         for process in processes:
             process.join()
@@ -449,7 +339,7 @@ if __name__ == "__main__":
             logging.StreamHandler(sys.stdout)
         )
         storage = optuna.storages.RDBStorage(
-            url="sqlite:///tuning/UNREAL-tetrisv4.db",
+            url="sqlite:///tuning/UNREAL.db",
             engine_kwargs={"connect_args": {"timeout": 30}},
         )
         study = optuna.create_study(
@@ -459,16 +349,13 @@ if __name__ == "__main__":
             directions=["maximize", "maximize", "maximize", "minimize"],  # UNREAL
         )
 
-        # if os.path.isfile("./tuning/sampler.pkl"):
-        #     restored_sampler = pickle.load(open("tuning/sampler.pkl", "rb"))
-        #     study.sampler = restored_sampler
+        if os.path.isfile("./tuning/sampler.pkl"):
+            restored_sampler = pickle.load(open("tuning/sampler.pkl", "rb"))
+            study.sampler = restored_sampler
 
-        # completed_trials = len(
-        #     [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
-        # )
-        n_trials = 10
+        n_trials = 20
 
-        study.optimize(new_objective, n_trials=n_trials, show_progress_bar=True)
+        study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
 
         metrics = [
             (0, "rewards"),

@@ -48,9 +48,6 @@ def make_env(
     level: int = 0,
     num_games: int | None = None,
 ):
-    
-    manual_seed(42)
-    np.random.seed(42)
     make_params = {
         "render_mode": "rgb_array" if record else render_mode,
         "level": level

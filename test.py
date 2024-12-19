@@ -32,7 +32,7 @@ if __name__ == "__main__":
         id="TetrisA-v3",
     )
 
-    checkpoint = torch.load(f"./trained_models/UNREAL-tetris_checkpoint.tar", weights_only=True)
+    # checkpoint = torch.load(f"./trained_models/UNREAL_checkpoint.tar", weights_only=True)
 
     global_model = UNREAL(
         n_inputs=(84, 84, 3),
@@ -41,16 +41,14 @@ if __name__ == "__main__":
         device=torch.device("cpu"),
         beta=params["beta"],
         gamma=params["gamma"],
-        temperature=10.0
     )
-    global_model.load_state_dict(checkpoint["model_state_dict"])
+    # global_model.load_state_dict(checkpoint["model_state_dict"])
     optimizer = SharedRMSprop(global_model.parameters(), params["lr"])
     local_model = UNREAL(
         n_inputs=(84, 84, 3),
         n_actions=env.action_space.n,
         hidden_size=256,
         device=device,
-        temperature=150.0
     )
     local_model.train()
     experience_replay = ReplayBuffer(500)
@@ -122,7 +120,7 @@ if __name__ == "__main__":
 
             state_tensor = torch.from_numpy(state).unsqueeze(0).to(device)
             policy, value, hx, cx = local_model(state_tensor, action, reward, (hx, cx))
-            print(policy)
+            # print(policy)
 
             dist = Categorical(probs=policy)
             action = dist.sample()
@@ -211,10 +209,10 @@ if __name__ == "__main__":
         # print()
         # print(total_gradient, clipped_grad)
         ensure_share_grads(
-            local_model=local_model, global_model=global_model, device=device
+            local_model=local_model, global_model=global_model
         )
         optimizer.step()
-        local_model._set_temperature(max(1.0, local_model.temperature * 0.9999))
+        # local_model._set_temperature(max(1.0, local_model.temperature * 0.9999))
 
     # plt.plot(
     #     np.array(rewards)
