@@ -26,16 +26,6 @@ class FrameSkipWrapper(gym.Wrapper):
     def step(self, action):
         done = False
         total_rewards = 0.0
-        rotation_reward = 0.0
-
-        if action in [1, 2, 4, 5, 7, 8, 10, 11]:
-            if self.env.unwrapped._current_piece != 'O' and not self.is_prev_rotate:
-                rotation_reward += 1
-                self.is_prev_rotate = True
-            else:
-                total_rewards -= 0.5
-        else:
-            self.is_prev_rotate = False
 
         for i in range(self.skip):
             if i == 0 and np.random.rand() < (1/self.skip):
@@ -50,7 +40,7 @@ class FrameSkipWrapper(gym.Wrapper):
 
         blocks = sum(info["statistics"].values())
         if self.blocks < blocks:
-            total_rewards += self.reward_func() + rotation_reward
+            total_rewards += self.reward_func()
             self.blocks = blocks
         lines = info['number_of_lines']
         if self.lines < lines:

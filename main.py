@@ -44,7 +44,7 @@ def get_args():
         help="jumlah episode sebelum menyimpan checkpoint model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=2e6, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=2e7, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
