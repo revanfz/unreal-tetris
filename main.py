@@ -1,8 +1,8 @@
 import os
 os.environ["OMP_NUM_THREADS"] = "1"
 
-import time
 import torch
+import random
 import argparse
 import numpy as np
 import torch.multiprocessing as mp
@@ -44,7 +44,7 @@ def get_args():
         help="jumlah episode sebelum menyimpan checkpoint model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=2e7, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=1e7, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
@@ -86,8 +86,11 @@ def get_args():
 def train(params: argparse.Namespace) -> None:
     try:
         device = torch.device("cpu")
-        torch.manual_seed(42)
+        # Reproducible / Deterministic behavior
+        torch.backends.cudnn.deterministic = True
+        random.seed(42)
         np.random.seed(42)
+        torch.manual_seed(42)
         if device.type == "cuda":
             torch.cuda.manual_seed(42)
             torch.cuda.manual_seed_all(42)
@@ -105,10 +108,11 @@ def train(params: argparse.Namespace) -> None:
         global_model.share_memory()
         global_model.train()
         
-        if opt.optimizer == "adam":
+        if params.optimizer == "adam":
             optimizer = SharedAdam(global_model.parameters(), lr=params.lr)
-        elif opt.optimizer == "rmsprop":
+        elif params.optimizer == "rmsprop":
             optimizer = SharedRMSprop(global_model.parameters(), lr=params.lr)
+
 
         processes = []
         global_steps = mp.Value("i", 0)
@@ -119,10 +123,10 @@ def train(params: argparse.Namespace) -> None:
 
         if opt.resume_training:
             if os.path.isdir(opt.model_path):
-                file_ = f"{opt.model_path}/UNREAL-heuristic_checkpoint.tar"
+                file_ = f"{opt.model_path}/UNREAL-diverse_checkpoint.tar"
                 if os.path.isfile(file_):
                     load_model = True
-                    checkpoint = torch.load(file_, weights_only=True)
+                    checkpoint = torch.load(file_, weights_only=True, map_location=torch.device("cpu"))
                     global_model.load_state_dict(checkpoint["model_state_dict"])
                     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
                     global_steps = mp.Value("i", checkpoint["steps"])
@@ -176,19 +180,6 @@ def train(params: argparse.Namespace) -> None:
             )
             process.start()
             processes.append(process)
-
-        # with tqdm(
-        #     total=opt.max_steps - global_steps.value if load_model else opt.max_steps,
-        #     desc=f"{'Resuming ' if load_model else ''}Training model",
-        #     unit="steps",
-        # ) as pbar:
-        #     while any(p.is_alive() for p in processes):
-        #         with global_steps.get_lock():
-        #             pbar.n = global_steps.value - (
-        #                 checkpoint["steps"] if load_model else 0
-        #             )
-        #             pbar.refresh()
-        #         time.sleep(0.1)
 
         for process in processes:
             process.join()

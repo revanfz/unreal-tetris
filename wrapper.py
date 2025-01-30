@@ -1,5 +1,4 @@
 import os
-import time
 import numpy as np
 import gymnasium as gym
 
@@ -12,7 +11,7 @@ LINE_REWARDS = {1: 40, 2: 100, 3: 300, 4: 1200}
 
 class FrameSkipWrapper(gym.Wrapper):
     def __init__(
-        self, env, skip=4,
+        self, env, skip=4, level=19
     ):
         super().__init__(env)
         self.env = env
@@ -20,34 +19,33 @@ class FrameSkipWrapper(gym.Wrapper):
         self.lines = 0
         self.blocks = 1
         self.fitness = 0
-        self.prev_action = 0
-        self.is_prev_rotate = False
+        self.level = level
+        self.lines_history = []
 
     def step(self, action):
-        done = False
         total_rewards = 0.0
-
-        for i in range(self.skip):
-            if i == 0 and np.random.rand() < (1/self.skip):
-                action_taken = self.prev_action
-            else:
-                action_taken = action
-            obs, reward, done, truncated, info = self.env.step(action_taken)
+        for step in range(self.skip):
+            if step > 0 and action != 5:
+                action = 0
+            obs, reward, done, truncated, info = self.env.step(action)
             total_rewards += reward
             if done:
-                total_rewards -= 20
+                total_rewards -= 100
                 break
+        
+        lines = info['number_of_lines']
+        if self.lines < lines:
+            lines_cleared = lines - self.lines
+            self.lines = lines
+            self.lines_history.append(lines_cleared)
+            total_rewards += LINE_REWARDS[lines_cleared]
+            total_rewards += 0.76 * lines_cleared
 
         blocks = sum(info["statistics"].values())
         if self.blocks < blocks:
             total_rewards += self.reward_func()
             self.blocks = blocks
-        lines = info['number_of_lines']
-        if self.lines < lines:
-            lines_cleared = lines - self.lines
-            total_rewards += LINE_REWARDS[lines_cleared] + 0.76 * lines_cleared
-            self.lines += lines_cleared
-        self.prev_action = action_taken
+            
         return obs, total_rewards, done, truncated, info
     
 
@@ -55,8 +53,7 @@ class FrameSkipWrapper(gym.Wrapper):
         self.lines = 0
         self.blocks = 1
         self.fitness = 0
-        self.prev_action = 0
-        self.is_prev_rotate = False
+        self.lines_history.clear()
         return self.env.reset(seed=seed, options=options)
 
     def uneven_penalty(self, board: np.ndarray):
@@ -76,7 +73,6 @@ class FrameSkipWrapper(gym.Wrapper):
         board[board == 239] = 0
         hp, bp = self.uneven_penalty(board)  # height penalty, bumpiness penalty
         hole_penalty = self.hole_penalty(board)
-        # print(f"Height penalty {hp}, Bumpiness penalty  {bp}, Hole penalty {hole_penalty}")
         return hp + hole_penalty + bp
     
     def reward_func(self):
@@ -86,40 +82,47 @@ class FrameSkipWrapper(gym.Wrapper):
         return reward
 
 
-
 class RecordVideo(gym.Wrapper):
-    def __init__(self, env, path: str, format: str):
+    def __init__(self, env, path: str, format: str, log_every: int = 100, episode = 0, recording = True):
         super().__init__(env)
         self.env = env
         self.path = path
         self.format = format
-        self.episode = 1
+        self.episode = episode
+        self.log_every = log_every
         self.frame_captured = []
+        self.recording = recording
 
         if not os.path.isdir(self.path):
             os.makedirs(self.path)
 
     def step(self, action):
         obs, reward, done, truncated, info = self.env.step(action)
-        self.frame_captured.append(self.env.render().copy())
+        self.frame_captured.append(self.env.unwrapped.screen.copy())
         if done:
-            self.close()
-            self.episode += 1
+            self.record()
+            if self.recording:
+                self.episode += 1
         return obs, reward, done, truncated, info
 
-    def close(self):
-        if len(self.frame_captured) > 0:
+    def record(self):
+        if len(self.frame_captured) > 0 and self.recording:
             if self.format in ["mp4", "avi", "webm", "ogv", "gif"]:
-                filename = "{}/{}.{}".format(self.path, self.episode, self.format)
+                filename = "{}/{}.{}".format(self.path, int(self.episode // self.log_every + 1), self.format)
                 clip = ImageSequenceClip(
-                    self.frame_captured, fps=self.env.metadata.get("fps", 60)
+                    self.frame_captured[::2], fps=self.env.metadata.get("fps", 30)
                 ).fx(resize, width=480)
-                if self.format == "gif":
-                    clip.write_gif(filename)
-                else:
-                    clip.write_videofile(filename, threads=2)
+                # ).with_effects([Resize(width=480)])
+                if self.episode % self.log_every == 0:
+                    if self.format == "gif":
+                        clip.write_gif(filename)
+                    else:
+                        clip.write_videofile(filename)
             else:
                 raise error.Error(
                     f"Invalid recording format. Supported are mp4, avi, webm, ogv, gif"
                 )
+
+    def reset(self, seed=None, options=None):
         self.frame_captured.clear()
+        return self.env.reset(seed=seed, options=options)

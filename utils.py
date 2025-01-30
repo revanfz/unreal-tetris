@@ -4,18 +4,16 @@ import time
 import numpy as np
 
 from tqdm import tqdm
-from torch import manual_seed
 from gymnasium.wrappers import (
     ResizeObservation,
     GrayscaleObservation,
     FrameStackObservation,
     RecordEpisodeStatistics,
 )
-
 from torch import Tensor, float32
 from torchvision.transforms import v2
+from gym_tetris.actions import SIMPLE_MOVEMENT
 from nes_py.wrappers import JoypadSpace
-from gym_tetris.actions import MOVEMENT
 from wrapper import FrameSkipWrapper, RecordVideo
 from multiprocessing.sharedctypes import Synchronized
 
@@ -35,6 +33,7 @@ def preprocessing(state: np.ndarray, pixel_control: bool = False) -> Tensor:
         obs = preprocess(state.copy()).numpy()
     return obs
 
+
 def make_env(
     id: str = "TetrisA-v3",
     grayscale: bool = False,
@@ -42,20 +41,23 @@ def make_env(
     render_mode="rgb_array",
     skip: int = 4,
     framestack: int | None = None,
-    record = False,
+    record=False,
     path: str | None = "./videos",
-    format: str | None = "gif",
+    format: str | None = "mp4",
     level: int = 0,
+    log_every: int = 1000,
+    episode: int = 0,
     num_games: int | None = None,
+    record_statistics = False,
 ):
     make_params = {
-        "render_mode": "rgb_array" if record else render_mode,
-        "level": level
+        "render_mode": render_mode,
+        "level": level,
     }
 
     env = gym_tetris.make(id, **make_params)
-    env = JoypadSpace(env, MOVEMENT)
-    env = FrameSkipWrapper(env, skip=skip)
+    env.metadata["fps"] = 60
+    env = JoypadSpace(env, SIMPLE_MOVEMENT)
 
     if grayscale:
         env = GrayscaleObservation(env, keep_dim=True)
@@ -64,8 +66,19 @@ def make_env(
     if framestack:
         env = FrameStackObservation(env, framestack)
     if record:
-        env = RecordVideo(env, path, format)
+        # env = RecordVideo(
+        #     env,
+        #     video_folder="./videos",
+        #     episode_trigger=lambda x: x % 250 == True,
+        #     name_prefix="tetris",
+        #     disable_logger=True,
+        # )
+        env = RecordVideo(env, path, format, log_every=log_every, episode=episode)
+        record_statistics = True
+    if record_statistics:
         env = RecordEpisodeStatistics(env, buffer_length=num_games)
+
+    env = FrameSkipWrapper(env, skip=skip, level=level)
 
     return env
 
@@ -88,7 +101,13 @@ def ensure_share_grads(
             global_param._grad = local_param.grad.cpu()
 
 
-def update_progress(global_steps: Synchronized, max_steps: float, checkpoint_steps = 0, desc=None, unit=None):
+def update_progress(
+    global_steps: Synchronized,
+    max_steps: float,
+    checkpoint_steps=0,
+    desc=None,
+    unit=None,
+):
     pbar = tqdm(
         total=max_steps,
         desc="Total Steps" if not desc else desc,
@@ -115,5 +134,5 @@ def batch_pixel_diff(state, new_state, cell_size=4):
     n_envs, h, w = m.shape
     h_cells, w_cells = h // cell_size, w // cell_size
     reshaped = m.view(n_envs, h_cells, cell_size, w_cells, cell_size)
-    pixel_change = reshaped.mean(dim=(-1, -3))  
+    pixel_change = reshaped.mean(dim=(-1, -3))
     return pixel_change

@@ -26,15 +26,14 @@ device = torch.device("cpu")
 
 if __name__ == "__main__":
     env = make_env(resize=84, render_mode="human", level=19, skip=2)
-    # checkpoint = torch.load("trained_models/final.pt", weights_only=True)
-    checkpoint = torch.load("trained_models/UNREAL-heuristic_checkpoint.tar", weights_only=True)
+    # checkpoint = torch.load("trained_models/UNREAL-cont.pt", weights_only=True)
+    checkpoint = torch.load("trained_models/UNREAL-cont_checkpoint.tar", weights_only=True)
 
     local_model = UNREAL(
         n_inputs=(84, 84, 3),
         n_actions=env.action_space.n,
         hidden_size=256,
         device=device,
-        temperature=2.0
     )
     local_model.load_state_dict(
         checkpoint["model_state_dict"]
@@ -48,7 +47,7 @@ if __name__ == "__main__":
 
     while True:
         if done:
-            state, info = env.reset()
+            state, info = env.reset(seed=42)
             state = preprocessing(state)
             hx = torch.zeros(1, params["hidden_size"]).to(device)
             cx = torch.zeros(1, params["hidden_size"]).to(device)
@@ -62,14 +61,13 @@ if __name__ == "__main__":
         policy, value, hx, cx = local_model(state_tensor, action, reward, (hx, cx))
 
         dist = Categorical(probs=policy)
-        # action = dist.sample()
+        action = dist.sample()
         # if policy[0][1] >= 0.1 or policy[0][2] >= 0.1:
         # print("probs:", policy)
-        action = policy.argmax().unsqueeze(0)
+        # action = policy.argmax().unsqueeze(0)
 
         next_state, reward, done, _, info = env.step(action.item())
-        if reward:
-            print(reward)
+        # print(reward)
         next_state = preprocessing(next_state)
         pixel_change = pixel_diff(state, next_state)
         action = F.one_hot(action, num_classes=env.action_space.n).to(device)
@@ -82,4 +80,4 @@ if __name__ == "__main__":
             # hx = torch.zeros(1, params["hidden_size"]).to(device)
             # cx = torch.zeros(1, params["hidden_size"]).to(device)
             print(info)
-            # break
+            break

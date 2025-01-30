@@ -60,9 +60,10 @@ def train(
         env = make_env(
             resize=84,
             render_mode="rgb_array",
-            id="TetrisA-v3",
+            id="TetrisA-v2",
             level=19,
-            skip=2
+            skip=2,
+            reward_design="scoring",
         )
 
         local_model = UNREAL(
@@ -76,14 +77,14 @@ def train(
         local_model.train()
         experience_replay = ReplayBuffer(2000)
 
-        state, info = env.reset(seed=42 + rank)
+        state, info = env.reset(seed=42+rank)
         state = preprocessing(state)
-        action = F.one_hot(torch.LongTensor([0]), env.action_space.n).to(device)
-        reward = torch.zeros(1, 1).to(device)
+        action = F.one_hot(torch.LongTensor([0]), env.action_space.n)
+        reward = torch.zeros(1, 1)
 
         while not experience_replay._is_full():
             with torch.no_grad():
-                state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
+                state_tensor = torch.FloatTensor(state).unsqueeze(0)
                 policy, value, _, _ = local_model(state_tensor, action, reward, None)
                 probs = F.softmax(policy, dim=1)
                 dist = Categorical(probs=probs)
@@ -94,18 +95,18 @@ def train(
             pixel_change = pixel_diff(state, next_state)
             experience_replay.store(state, reward, action.item(), done, pixel_change)
             state = next_state
-            action = F.one_hot(action, num_classes=env.action_space.n).to(device)
-            reward = torch.FloatTensor([[reward]]).to(device)
+            action = F.one_hot(action, num_classes=env.action_space.n)
+            reward = torch.FloatTensor([[reward]])
 
             if done:
-                state, info = env.reset(seed=42 + rank)
+                state, info = env.reset(seed=42+rank)
                 state = preprocessing(state)
 
         done = True
         action = F.one_hot(torch.LongTensor([0]), num_classes=env.action_space.n).to(
             device
         )
-        reward = torch.zeros(1, 1).to(device)
+        reward = torch.zeros(1, 1)
 
         # while not stop_event.is_set():
         while global_steps.value <= params["max_steps"]:
@@ -119,10 +120,10 @@ def train(
             values = torch.zeros_like(dones, device=device)
 
             if done:
-                state, info = env.reset(seed=42 + rank)
+                state, info = env.reset(seed=42+rank)
                 state = preprocessing(state)
-                hx = torch.zeros(1, params["hidden_size"]).to(device)
-                cx = torch.zeros(1, params["hidden_size"]).to(device)
+                hx = torch.zeros(1, params["hidden_size"])
+                cx = torch.zeros(1, params["hidden_size"])
                 episode_rewards = 0
             else:
                 hx = hx.detach()
@@ -132,7 +133,7 @@ def train(
                 with global_steps.get_lock():
                     global_steps.value += 1
 
-                state_tensor = torch.from_numpy(state).unsqueeze(0).to(device)
+                state_tensor = torch.from_numpy(state).unsqueeze(0)
                 policy, value, hx, cx = local_model(
                     state_tensor, action, reward, (hx, cx)
                 )
@@ -157,7 +158,7 @@ def train(
                 rewards[step] = torch.tensor(reward, device=device)
 
                 state = next_state
-                action = F.one_hot(action, num_classes=env.action_space.n).to(device)
+                action = F.one_hot(action, num_classes=env.action_space.n)
                 reward = torch.tensor([[reward]], device=device).float()
 
                 if done:
@@ -243,7 +244,7 @@ def objective(trial: optuna.Trial):
             resize=84,
             render_mode="rgb_array",
             level=19,
-            skip=4,
+            skip=2,
         )
 
         params = {
@@ -320,10 +321,10 @@ def objective(trial: optuna.Trial):
             process.join()
 
         return (
-            global_rewards.value,
+            global_rewards.value / global_tries.value,
             global_blocks.value / global_tries.value,
             global_lines.value,
-            global_tries.value,
+            global_tries.value
         )
 
     except KeyboardInterrupt:
@@ -343,7 +344,7 @@ if __name__ == "__main__":
             engine_kwargs={"connect_args": {"timeout": 30}},
         )
         study = optuna.create_study(
-            study_name="UNREAL",
+            study_name="UNREAL-tetris",
             storage=storage,
             load_if_exists=True,
             directions=["maximize", "maximize", "maximize", "minimize"],  # UNREAL
@@ -353,7 +354,7 @@ if __name__ == "__main__":
             restored_sampler = pickle.load(open("tuning/sampler.pkl", "rb"))
             study.sampler = restored_sampler
 
-        n_trials = 20
+        n_trials = 30
 
         study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
 

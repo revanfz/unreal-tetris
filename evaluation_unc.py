@@ -8,7 +8,6 @@ import torch.nn.functional as F
 from pprint import pp
 from model import UNREAL
 from utils import make_env, preprocessing
-from torch.distributions import Categorical
 
 
 def get_args():
@@ -28,6 +27,7 @@ def get_args():
     args = parser.parse_args()
     return args
 
+
 params = get_args()
 total_test_case = 1
 data_dir = "./UNREAL-eval/uncertainty/csv"
@@ -37,34 +37,35 @@ if __name__ == "__main__":
         os.makedirs(data_dir, exist_ok=True)
 
     device = torch.device("cpu")
-    checkpoint = torch.load("trained_models/UNREAL.pt", weights_only=True)
+    checkpoint = torch.load("trained_models/UNREAL-cont.pt", weights_only=True, map_location=torch.device("cpu"))
 
-    model =  UNREAL(
+    model = UNREAL(
         n_inputs=(84, 84, 3),
-        n_actions=12,
+        n_actions=6,
         hidden_size=256,
         device=device,
     )
-    model.load_state_dict(
-        checkpoint
-    )
+    model.load_state_dict(checkpoint)
     model.eval()
-
-    for test_case in range(params.start_case-1, total_test_case-params.start_case+1):
+    for test_case in range(params.start_case - 1, total_test_case):
         video_path = f"./UNREAL-eval/uncertainty/videos/{test_case+1}"
-    
+        data_path = f"{data_dir}"
+
         if not os.path.isdir(video_path):
             os.makedirs(video_path, exist_ok=True)
-        if os.listdir(video_path):
-            raise Exception("Folder is not empty. Folder berisi hasil runs sebelumnya")
-        
+        if not os.path.isdir(data_path):
+            os.makedirs(data_path, exist_ok=True)
+
         env = make_env(
             record=True,
             resize=84,
             path=video_path,
-            level = 10 + test_case,
-            num_games = params.num_tries,
-            id="TetrisA-v0"
+            level=9 + test_case,
+            num_games=params.num_tries,
+            id="TetrisA-v3",
+            render_mode="human",
+            log_every=1,
+            skip=2,
         )
 
         data = {
@@ -74,6 +75,9 @@ if __name__ == "__main__":
             "block_placed": [],
             "episode_time": [],
             "episode_length": [],
+            "action_taken": [],
+            "lines_history": [],
+            "board_history": [],
         }
 
         done = True
@@ -82,24 +86,33 @@ if __name__ == "__main__":
             while True:
                 if done:
                     state, info = env.reset()
+                    ep_r = 0
                     state = preprocessing(state)
-                    action = F.one_hot(torch.LongTensor([0]), num_classes=env.action_space.n).to(device)
+                    action = F.one_hot(
+                        torch.LongTensor([0]), num_classes=env.action_space.n
+                    ).to(device)
                     reward = torch.zeros(1, 1).to(device)
                     hx = torch.zeros(1, 256).to(device)
                     cx = torch.zeros(1, 256).to(device)
-                else:
-                    hx = hx.detach()
-                    cx = cx.detach()
+                    action_taken = list()
+                    board_history = []
+                    blocks = 1
 
                 state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
-                policy, _, hx, cx = model(
-                    state_tensor, action, reward, (hx, cx)
-                )
-
-                dist = Categorical(probs=policy)
-                action = dist.sample()
+                policy, _, hx, cx = model(state_tensor, action, reward, (hx, cx))
+                action = policy.argmax().unsqueeze(0)
+                action_taken.append(action.item())
 
                 next_state, reward, done, _, info = env.step(action.item())
+
+                if sum(info["statistics"].values()) > blocks:
+                    board = env.unwrapped._board
+                    board[board == 239] = 0
+                    board[board > 0] = 1
+                    board_history.append(board.tolist())
+                    blocks = sum(info["statistics"].values())
+
+                ep_r += reward
                 next_state = preprocessing(next_state)
                 action = F.one_hot(action, num_classes=env.action_space.n).to(
                     device
@@ -108,17 +121,19 @@ if __name__ == "__main__":
                 state = next_state
 
                 if done:
-                    data["lines"].append(info['number_of_lines'])
+                    data["lines"].append(info["number_of_lines"])
                     data["block_placed"].append(sum(info["statistics"].values()))
-                    data["score"].append(info['score'])
-                    data["rewards"].append(info["episode"]["r"])
+                    data["score"].append(info["score"])
+                    data["rewards"].append(ep_r)
+                    data["action_taken"].append(action_taken)
+                    data["lines_history"].append(env.lines_history.copy())
+                    data["board_history"].append(board_history)
                     break
-            
-        
-        data["episode_length"] = np.array(env.length_queue)
-        data["episode_time"] = np.array(env.time_queue)
-        del env
+
+        data["episode_length"] = np.array(env.env.length_queue)
+        data["episode_time"] = np.array(env.env.time_queue)
+        env.close()
 
         df = pd.DataFrame(data)
         pp(df)
-        df.to_csv(f"{data_dir}/{test_case+1}.csv", index=False)
+        df.to_csv(f"{data_path}/{test_case+1}.csv", index=False)

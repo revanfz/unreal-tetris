@@ -1,13 +1,14 @@
 import os
 os.environ["OMP_NUM_THREADS"] = "1"
 
+import time
 import numpy as np
 import pandas as pd
 import torch.multiprocessing as mp
 
 from model import UNREAL
-from utils import make_env, update_progress
 from torch.nn.functional import one_hot
+from utils import make_env, update_progress
 from torch.distributions import Categorical
 from gymnasium.wrappers import RecordEpisodeStatistics
 from multiprocessing.sharedctypes import SynchronizedBase
@@ -17,7 +18,7 @@ from torch import device, load, from_numpy, tensor, zeros, zeros_like, no_grad
 TEST_CASE = 10
 EVAL_PATH = "./"
 TEST_LENGTH = 1_000_000
-MODEL_PATH = "./trained_models/UNREAL.pt"
+MODEL_PATH = "./trained_models/UNREAL-final.pt"
 CSV_PATH = "./UNREAL-eval"
 if not os.path.isdir(CSV_PATH):
     os.makedirs(CSV_PATH)
@@ -56,6 +57,9 @@ def agent(
     with no_grad():
         while global_steps.value <= max_steps:
             if done:
+                eps_rewards = 0
+                eps_start = time.perf_counter()
+                eps_length = 0
                 action_taken = list()
                 state, info = env.reset()
                 hx = zeros(1, 256, device=device)
@@ -64,11 +68,13 @@ def agent(
             state = from_numpy(state.transpose(2, 0, 1) / 255.0).float().to(device)
             policy, _, hx, cx = MODEL(state.unsqueeze(0), action, reward, (hx, cx))
 
-            # action = policy.argmax().unsqueeze(0)
-            dist = Categorical(probs=policy)
-            action = dist.sample()
+            action = policy.argmax().unsqueeze(0)
+            # dist = Categorical(probs=policy)
+            # action = dist.sample()
 
             state, reward, done, _, info = env.step(action.item())
+            eps_rewards += reward
+            eps_length += 1
             action_taken.append(action.item())
             action = one_hot(action, num_classes=MODEL.n_actions).to(device)
             reward = tensor([[reward]], device=device).float()
@@ -77,7 +83,7 @@ def agent(
                 global_steps.value += 1
 
             if done:
-                queue.put(np.array([info['episode']['r'], sum(info["statistics"].values()), info['episode']['l'], info['episode']['t'], action_taken], dtype=object))
+                queue.put(np.array([eps_rewards, sum(info["statistics"].values()), info["number_of_lines"], eps_length, time.perf_counter() - eps_start, action_taken], dtype=object))
     queue.put(None)
 
 
@@ -132,7 +138,7 @@ if __name__ == "__main__":
                 process.join()          
 
             data = np.array(all_data)
-            df = pd.DataFrame(data, columns=["rewards", "blocks", "episode length", "survival time", "action sequence"])
+            df = pd.DataFrame(data, columns=["rewards", "blocks", "lines", "episode length", "survival time", "action sequence"])
             df.to_csv(f"{CSV_PATH}/{test}.csv", index=False)
 
     except KeyboardInterrupt as e:

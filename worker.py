@@ -1,5 +1,9 @@
+import wandb
 import torch
+import numpy as np
 import torch.nn as nn
+import wandb.integration
+import wandb.integration.gym
 import torch.nn.functional as F
 
 from model import UNREAL
@@ -23,18 +27,17 @@ def worker(
     device: torch.device,
 ):
     try:
-        level = 19
-        torch.manual_seed(42 + rank)
-
-        render_mode = "human" if not rank else "rgb_array"
+        render_mode = "rgb_array" if rank else "human"
         env = make_env(
             id="TetrisA-v3",
             resize=84,
             render_mode=render_mode,
-            level=level,
+            level=19 - rank,
             skip=2,
+            record=True if not rank else False,
+            log_every=500,
+            episode=global_episodes.value,
         )
-        env.action_space.seed(42 + rank)
 
         local_model = UNREAL(
             n_inputs=(84, 84, 3),
@@ -43,19 +46,45 @@ def worker(
             device=device,
             beta=params.beta,
             gamma=params.gamma,
+            pc=global_model.use_pc,
+            vr=global_model.use_vr,
+            rp=global_model.use_rp
         )
         local_model.load_state_dict(global_model.state_dict())
         local_model.train()
-
         experience_replay = ReplayBuffer(2000)
 
         prev_action = F.one_hot(torch.tensor([0]).long(), env.action_space.n).to(device)
         prev_reward = torch.zeros(1, 1, device=device)
 
         if not rank:
-            writer = SummaryWriter(f"{params.log_path}/UNREAL-heuristic")
+            tries = 0
+            wandb.tensorboard.patch(root_logdir=f"{params.log_path}/UNREAL-diverse", pytorch=True)
+            wandb.init(
+                project="UNREAL-diverse",
+                config={
+                    "learning_rate": params.lr,
+                    "optimizer": params.optimizer,
+                    "unroll_steps": params.unroll_steps,
+                    "pc_weight": params.pc_weight,
+                    "grad_norm": params.grad_norm,
+                    "hidden_size": params.hidden_size,
+                    "num_agents": params.num_agents,
+                    "gamma": global_model.gamma,
+                    "beta": global_model.beta,
+                    "n_actions": global_model.n_actions,
+                    "input_dim": global_model.n_inputs,
+                },
+                id=f"UNREAL",
+                resume="allow",
+                name=f"UNREAL",
+                sync_tensorboard=True
+            )
+            wandb.watch(local_model, log="all", log_freq=params.save_interval)
+            ep_writer = SummaryWriter(f"{params.log_path}/UNREAL-diverse/episode")
+            game_writer = SummaryWriter(f"{params.log_path}/UNREAL-diverse/game")
             with torch.no_grad():
-                writer.add_graph(
+                ep_writer.add_graph(
                     local_model,
                     (
                         torch.zeros(1, 3, 84, 84).to(device),
@@ -71,7 +100,7 @@ def worker(
         done = True
         while not experience_replay._is_full():
             if done:
-                state, info = env.reset(seed=42 + rank)
+                state, info = env.reset(seed=42+rank)
                 state = preprocessing(state)
                 hx = torch.zeros(1, params.hidden_size, device=device)
                 cx = torch.zeros(1, params.hidden_size, device=device)
@@ -97,7 +126,7 @@ def worker(
 
         done = True
         current_episodes = 0
-
+        # env.recording = True
         action = F.one_hot(torch.tensor([0]).long(), env.action_space.n).to(device)
         reward = torch.zeros(1, 1, device=device)
 
@@ -111,8 +140,10 @@ def worker(
             entropies = torch.zeros_like(dones, device=device)
             values = torch.zeros_like(dones, device=device)
 
+            episode_rewards = 0
+
             if done:
-                state, info = env.reset(seed=42 + rank)
+                state, info = env.reset(seed=42+rank)
                 state = preprocessing(state)
                 hx = torch.zeros(1, params.hidden_size, device=device)
                 cx = torch.zeros(1, params.hidden_size, device=device)
@@ -132,6 +163,7 @@ def worker(
                 log_prob = dist.log_prob(action)
 
                 next_state, reward, done, _, info = env.step(action.cpu().item())
+                episode_rewards += reward
                 next_state = preprocessing(next_state)
                 pixel_change = pixel_diff(state, next_state)
                 experience_replay.store(
@@ -152,15 +184,26 @@ def worker(
                     global_steps.value += 1
 
                 if done:
-                    with global_lines.get_lock():
-                        global_lines.value += info["number_of_lines"]
+                    if info["number_of_lines"]:
+                        with global_lines.get_lock():
+                            global_lines.value += info["number_of_lines"]
 
                     if not rank:
-                        writer.add_scalar(
-                            f"Agent Block placed",
+                        key = "videos" if info["number_of_lines"] else "video"
+                        game_writer.add_scalar(
+                            f"Block placed",
                             sum(info["statistics"].values()),
                             global_episodes.value,
                         )
+                        if tries % 100 == 0 or info["number_of_lines"]:
+                            frames = np.array(env.env.frame_captured).transpose(0, 3, 1, 2)[::4]
+                            game_writer.add_video(
+                                f"{key}",
+                                torch.from_numpy(frames).unsqueeze(0),
+                                global_episodes.value,
+                                fps=30,
+                            )
+                        tries += 1
                     break
 
             # Bootstrapping
@@ -183,68 +226,70 @@ def worker(
                 values=values[: step + 1],
             )
             a3c_loss = actor_loss + 0.5 * critic_loss
-            episode_rewards = rewards.sum().cpu().detach()
+            total_loss = a3c_loss
 
             # Hitung Loss Pixel Control
             # 1.  Sampling replay buffer secara random
-            states, rewards, actions, dones, pixel_changes = (
-                experience_replay.sample_sequence(params.unroll_steps + 1)
-            )
-            # 2. Hitung loss Pixel Control
-            pc_loss = local_model.control_loss(
-                states, rewards, actions, dones, pixel_changes
-            )
+            if local_model.use_pc:
+                states, rewards, actions, dones, pixel_changes = (
+                    experience_replay.sample_sequence(params.unroll_steps + 1)
+                )
+                # 2. Hitung loss Pixel Control
+                pc_loss = local_model.control_loss(
+                    states, rewards, actions, dones, pixel_changes
+                )
+                total_loss += pc_loss * params.pc_weight
 
-            # Hitung Loss Reward Prediction
-            # 1. Sampel frame dengan peluang rewarding state = 0.5
-            states, rewards, actions, dones, pixel_changes = (
-                experience_replay.sample_rp()
-            )
-            # 2. Hitung loss reward prediction
-            rp_loss = local_model.rp_loss(states, rewards)
+            if local_model.use_rp:
+                # Hitung Loss Reward Prediction
+                # 1. Sampel frame dengan peluang rewarding state = 0.5
+                states, rewards, actions, dones, pixel_changes = (
+                    experience_replay.sample_rp()
+                )
+                # 2. Hitung loss reward prediction
+                rp_loss = local_model.rp_loss(states, rewards)
+                total_loss += rp_loss
 
-            # Hitung loss Value Replay
-            states, rewards, actions, dones, pixel_changes = (
-                experience_replay.sample_sequence(params.unroll_steps + 1)
-            )
-            vr_loss = local_model.vr_loss(states, actions, rewards, dones)
+            if local_model.use_vr:
+                # Hitung loss Value Replay
+                states, rewards, actions, dones, pixel_changes = (
+                    experience_replay.sample_sequence(params.unroll_steps + 1)
+                )
+                vr_loss = local_model.vr_loss(states, actions, rewards, dones)
+                total_loss += vr_loss
 
             # Penjumlahan loss a3c, pixel control, value replay dan reward prediction
-            total_loss = a3c_loss + params.pc_weight * pc_loss + rp_loss + vr_loss
+            # total_loss = a3c_loss + params.pc_weight * pc_loss + rp_loss + vr_loss
 
             total_loss.backward()
             nn.utils.clip_grad_norm_(local_model.parameters(), params.grad_norm)
-            ensure_share_grads(
-                local_model=local_model, global_model=global_model
-            )
+            ensure_share_grads(local_model=local_model, global_model=global_model)
             optimizer.step()
 
             if not rank:
-                writer.add_scalar(f"Total Loss", total_loss, global_episodes.value)
-                writer.add_scalar(f"Rewards", episode_rewards, global_episodes.value)
-                writer.add_scalar(
-                    f"Total lines cleared", global_lines.value, global_episodes.value
-                )
-                writer.add_scalar(
-                    f"A3C Loss", a3c_loss.detach().cpu().numpy(), global_episodes.value
-                )
-                writer.add_scalar(
-                    f"PC Loss", pc_loss.detach().cpu().numpy(), global_episodes.value
-                )
-                writer.add_scalar(
-                    f"RP Loss", rp_loss.detach().cpu().numpy(), global_episodes.value
-                )
-                writer.add_scalar(
-                    f"VR Loss", vr_loss.detach().cpu().numpy(), global_episodes.value
-                )
-                writer.add_scalar(
-                    f"Entropy",
-                    entropies.detach().mean().cpu().numpy(),
-                    global_episodes.value,
-                )
-
-                if current_episodes % 100 == 0:
-                    writer.flush()
+                with global_lines.get_lock():
+                    ep_writer.add_scalar(f"Total Loss", total_loss, global_episodes.value)
+                    ep_writer.add_scalar(f"Rewards", episode_rewards, global_episodes.value)
+                    ep_writer.add_scalar(
+                        f"Total lines cleared", global_lines.value, global_episodes.value
+                    )
+                    ep_writer.add_scalar(
+                        f"A3C Loss", a3c_loss.detach().cpu().numpy(), global_episodes.value
+                    )
+                    ep_writer.add_scalar(
+                        f"PC Loss", pc_loss.detach().cpu().numpy(), global_episodes.value
+                    )
+                    ep_writer.add_scalar(
+                        f"RP Loss", rp_loss.detach().cpu().numpy(), global_episodes.value
+                    )
+                    ep_writer.add_scalar(
+                        f"VR Loss", vr_loss.detach().cpu().numpy(), global_episodes.value
+                    )
+                    ep_writer.add_scalar(
+                        f"Entropy",
+                        entropies.detach().mean().cpu().numpy(),
+                        global_episodes.value,
+                    )
 
             current_episodes += 1
             with global_episodes.get_lock():
@@ -259,12 +304,21 @@ def worker(
                         "episodes": global_episodes.value,
                         "lines": global_lines.value,
                     },
-                    f"{params.model_path}/UNREAL-heuristic_checkpoint.tar",
+                    f"{params.model_path}/UNREAL-diverse_checkpoint.tar",
                 )
 
         if not rank:
             torch.save(
-                global_model.state_dict(), f"{params.model_path}/UNREAL-heuristic.pt"
+                global_model.state_dict(), f"{params.model_path}/UNREAL-diverse.pt"
+            )
+            torch.onnx.export(
+                global_model,
+                (state_tensor, prev_action, prev_reward, (hx, cx)),
+                f"{params.model_path}/UNREAL-diverse.onnx",
+                input_names=["input"],
+            )
+            wandb.save(
+                "UNREAL-diverse.onnx",
             )
         print(f"Pelatihan agen {rank} selesai")
 
@@ -277,8 +331,8 @@ def worker(
         raise Exception(f"Multiprocessing error\t{e}.")
 
     except Exception as e:
-        print(f"\nError ;X\t{e}")
-        raise Exception(f"{e}")
+        print("Error: ", e)
+        raise Exception(f"Error: {e}")
 
     finally:
         if not rank:
@@ -290,8 +344,9 @@ def worker(
                     "episodes": global_episodes.value,
                     "lines": global_lines.value,
                 },
-                f"{params.model_path}/UNREAL-heuristic_checkpoint.tar",
+                f"{params.model_path}/UNREAL-diverse_checkpoint.tar",
             )
-            writer.close()
-        env.close()
+            ep_writer.close()
+            game_writer.close()
+            wandb.finish()
         print(f"\tProses pelatihan agen {rank} dihentikan")

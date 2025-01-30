@@ -41,20 +41,20 @@ def get_args():
 
 params = get_args()
 
-DATA_DIR = "./UNREAL-tetris/auxiliary/"
+DATA_DIR = "./UNREAL-eval/auxiliary/"
 postfix_pc = f"{'no-' if not params.pixel_control else ''}pc"
 postfix_rp = f"{'no-' if not params.reward_prediction else ''}rp"
 postfix_vr = f"{'no-' if not params.value_replay else ''}vr"
 filename = f"UNREAL {postfix_pc}_{postfix_rp}_{postfix_vr}"
 
 # HYPERPARAMETER
-MAX_STEPS = 100_000
-LEARNING_RATE = 0.0002
-BETA = 0.00102
-GAMMA = 0.99
+MAX_STEPS = 1_000_000
+LEARNING_RATE = 0.00012
+BETA = 0.00318
+GAMMA = 0.95
 UNROLL_STEPS = 20
 HIDDEN_SIZE = 256
-PC_WEIGHT = 0.08928
+PC_WEIGHT = 0.05478
 
 def store_data(shared_dict: DictProxy, data: dict, lock: Lock, type: str):
     if type == "game":
@@ -91,7 +91,7 @@ def agent(rank: int, global_model: UNREAL, global_steps: Synchronized, shared_ep
 
     model =  UNREAL(
         n_inputs=(84, 84, 3),
-        n_actions=12,
+        n_actions=6,
         hidden_size=HIDDEN_SIZE,
         beta=BETA,
         gamma=GAMMA,
@@ -102,14 +102,15 @@ def agent(rank: int, global_model: UNREAL, global_steps: Synchronized, shared_ep
     )
     model.train()
     optimizer = SharedRMSprop(params=model.parameters(), lr=LEARNING_RATE)
-    optimizer.share_memory()
 
     env = make_env(
         resize=84,
         level = 19,
         skip=2,
-        id="TetrisA-v2",
-        render_mode="human" if not rank else "rgb_array"
+        id="TetrisA-v3",
+        render_mode="human" if not rank else "rgb_array",
+        record_statistics=True,
+        num_games=1
     )
 
     done = True
@@ -122,7 +123,8 @@ def agent(rank: int, global_model: UNREAL, global_steps: Synchronized, shared_ep
     hx = torch.zeros(1, HIDDEN_SIZE).to(device)
     cx = torch.zeros(1, HIDDEN_SIZE).to(device)
 
-    while not experience_replay._is_full():
+    # while not experience_replay._is_full():
+    for i in range(500):
         with torch.no_grad():
             state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
             policy, _, _, _ = model(
@@ -152,51 +154,61 @@ def agent(rank: int, global_model: UNREAL, global_steps: Synchronized, shared_ep
             cx = torch.zeros(1, HIDDEN_SIZE).to(device)
 
     done = True
+    action = F.one_hot(torch.tensor([0]).long(), env.action_space.n).to(device)
+    reward = torch.zeros(1, 1, device=device)
 
     while global_steps.value < MAX_STEPS:
-        for t in range(UNROLL_STEPS):
-            episode_rewards = 0
-            episode_time = time.perf_counter()
-            if done:
-                start_time = time.perf_counter()
-                episode_length = 0
-                game_reward = 0
-                state, info = env.reset()
-                state = preprocessing(state)
-                action = F.one_hot(torch.LongTensor([0]), num_classes=env.action_space.n).to(device)
-                reward = torch.zeros(1, 1).to(device)
-                hx = torch.zeros(1, 256).to(device)
-                cx = torch.zeros(1, 256).to(device)
-            else:
-                hx = hx.detach()
-                cx = cx.detach()
+        optimizer.zero_grad()
+        model.load_state_dict(global_model.state_dict())
 
-            state_tensor =  torch.from_numpy(state).unsqueeze(0).to(device)
-            policy, _, hx, cx = model(
+        dones = torch.zeros(UNROLL_STEPS, device=device)
+        rewards = torch.zeros_like(dones, device=device)
+        log_probs = torch.zeros_like(dones, device=device)
+        entropies = torch.zeros_like(dones, device=device)
+        values = torch.zeros_like(dones, device=device)
+
+        episode_rewards = 0
+        
+        if done:
+            state, info = env.reset(seed=42+rank)
+            state = preprocessing(state)
+            hx = torch.zeros(1, HIDDEN_SIZE, device=device)
+            cx = torch.zeros(1, HIDDEN_SIZE, device=device)
+            game_reward = 0
+        else:
+            hx = hx.detach()
+            cx = cx.detach()
+
+        for step in range(UNROLL_STEPS):
+            episode_time = time.perf_counter()
+            state_tensor = torch.from_numpy(state).unsqueeze(0).to(device)
+            policy, value, hx, cx = model(
                 state_tensor, action, reward, (hx, cx)
             )
 
             dist = Categorical(probs=policy)
             action = dist.sample()
+            entropy = dist.entropy()
+            log_prob = dist.log_prob(action)
 
-            next_state, reward, done, _, info = env.step(action.item())
+            next_state, reward, done, _, info = env.step(action.cpu().item())
             game_reward += reward
             episode_rewards += reward
-            if done:
-                stop_time = time.perf_counter()
             next_state = preprocessing(next_state)
             pixel_change = pixel_diff(state, next_state)
             experience_replay.store(
-                state, reward, action.item(), done, pixel_change
+                state, reward, action.cpu().item(), done, pixel_change
             )
+
+            values[step] = torch.squeeze(value)
+            entropies[step] = entropy
+            log_probs[step] = torch.squeeze(log_prob)
+            dones[step] = torch.tensor(not done, device=device)
+            rewards[step] = torch.tensor(reward, device=device)
+
             state = next_state
-
-            action = F.one_hot(action, num_classes=env.action_space.n).to(
-                device
-            )
-            reward = torch.FloatTensor([[reward]]).to(device)
-
-            episode_length += 1
+            action = F.one_hot(action, num_classes=env.action_space.n).to(device)
+            reward = torch.tensor([[reward]], device=device).float()
 
             with global_steps.get_lock():
                 global_steps.value += 1
@@ -207,8 +219,8 @@ def agent(rank: int, global_model: UNREAL, global_steps: Synchronized, shared_ep
                     "block_placed": sum(info["statistics"].values()),
                     "score": info['score'],
                     "rewards": game_reward,
-                    "episode_time": stop_time - start_time,
-                    "episode_length": episode_length,
+                    "episode_time": info["episode"]["t"],
+                    "episode_length": info["episode"]["l"],
                 }, lock, "game")
                 break
         
@@ -216,7 +228,7 @@ def agent(rank: int, global_model: UNREAL, global_steps: Synchronized, shared_ep
             "score": info['score'],
             "rewards": episode_rewards,
             "episode_time": time.perf_counter() - episode_time,
-            "episode_length": t + 1,
+            "episode_length": step + 1,
         }, lock, "episode")
 
         # Bootstrapping
@@ -231,14 +243,15 @@ def agent(rank: int, global_model: UNREAL, global_steps: Synchronized, shared_ep
                 )
 
         # Hitung loss A3C
-        states, rewards, actions, dones, pixel_change = experience_replay.sample(episode_length)
-        a3c_loss, entropy = model.a3c_loss(
-            states=states,
-            dones=dones,
-            actions=actions,
-            rewards=rewards,
+        actor_loss, critic_loss = model.a3c_loss(
+            rewards=rewards[: step + 1],
             R=R,
+            dones=dones[: step + 1],
+            log_probs=log_probs[: step + 1],
+            entropies=entropies[: step + 1],
+            values=values[: step + 1],
         )
+        a3c_loss = actor_loss + 0.5 * critic_loss
         total_loss = a3c_loss
 
         if model.use_pc:
@@ -276,7 +289,7 @@ def agent(rank: int, global_model: UNREAL, global_steps: Synchronized, shared_ep
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 40)
         ensure_share_grads(
-            local_model=model, global_model=global_model, device=device
+            local_model=model, global_model=global_model
         )
         optimizer.step()
 
@@ -287,7 +300,7 @@ if __name__ == "__main__":
 
     global_model =  UNREAL(
         n_inputs=(84, 84, 3),
-        n_actions=12,
+        n_actions=6,
         hidden_size=HIDDEN_SIZE,
         beta=BETA,
         gamma=GAMMA,
@@ -352,4 +365,6 @@ if __name__ == "__main__":
     df_game = pd.DataFrame(dict(shared_game_dict))
     df_episode = pd.DataFrame(dict(shared_episode_dict))
     df_game.to_csv(f"{DATA_DIR}/GAME-{filename}.csv", index=False)
-    df_episode.to_csv(f"{DATA_DIR}/EPISODE-{filename}.csv", index=False)    
+    df_episode.to_csv(f"{DATA_DIR}/EPISODE-{filename}.csv", index=False)
+
+    torch.save(global_model.state_dict(), f"{DATA_DIR}/{filename}.pt")
