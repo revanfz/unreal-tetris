@@ -1,7 +1,9 @@
 from __future__ import division
-
+import math
 import torch
 import torch.optim as optim
+from collections import defaultdict
+from math import sqrt
 
 class SharedRMSprop(optim.RMSprop):
     """Implements RMSprop algorithm with shared states."""
@@ -11,12 +13,21 @@ class SharedRMSprop(optim.RMSprop):
         params,
         lr=7e-4,
         alpha=0.99,
-        eps=1e-8,
+        eps=1e-5,
         weight_decay=0,
         momentum=0,
         centered=False,
     ):
-        super(SharedRMSprop, self).__init__(params, lr=lr, alpha=alpha, eps=eps, weight_decay=weight_decay, momentum=momentum, centered=centered)
+        defaults = defaultdict(
+            lr=lr,
+            alpha=alpha,
+            eps=eps,
+            weight_decay=weight_decay,
+            momentum=momentum,
+            centered=centered,
+        )
+        super(SharedRMSprop, self).__init__(params, **defaults)
+
         for group in self.param_groups:
             for p in group["params"]:
                 state = self.state[p]
@@ -25,10 +36,15 @@ class SharedRMSprop(optim.RMSprop):
                 state["square_avg"] = p.data.new().resize_as_(p.data).zero_()
                 state["momentum_buffer"] = p.data.new().resize_as_(p.data).zero_()
 
+    def share_memory(self):
+        for group in self.param_groups:
+            for p in group["params"]:
+                state = self.state[p]
                 state["square_avg"].share_memory_()
                 state["step"].share_memory_()
                 state["grad_avg"].share_memory_()
                 state["momentum_buffer"].share_memory_()
+
 
 class SharedAdam(optim.Adam):
     """Implements Adam algorithm with shared states."""
@@ -42,7 +58,10 @@ class SharedAdam(optim.Adam):
         weight_decay=0,
         amsgrad=False,
     ):
-        super(SharedAdam, self).__init__(params, lr=lr, betas=betas, weight_decay=weight_decay, eps=eps, amsgrad=amsgrad)
+        defaults = defaultdict(
+            lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, amsgrad=amsgrad
+        )
+        super(SharedAdam, self).__init__(params, **defaults)
 
         for group in self.param_groups:
             for p in group["params"]:
@@ -52,6 +71,10 @@ class SharedAdam(optim.Adam):
                 state["exp_avg_sq"] = p.data.new().resize_as_(p.data).zero_()
                 state["max_exp_avg_sq"] = p.data.new().resize_as_(p.data).zero_()
 
+    def share_memory(self):
+        for group in self.param_groups:
+            for p in group["params"]:
+                state = self.state[p]
                 state["step"].share_memory_()
                 state["exp_avg"].share_memory_()
                 state["exp_avg_sq"].share_memory_()

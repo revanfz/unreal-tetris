@@ -17,6 +17,7 @@ class FrameSkipWrapper(gym.Wrapper):
         self.env = env
         self.skip = skip
         self.lines = 0
+        self.lines_cleared = 0
         self.blocks = 1
         self.fitness = 0
         self.level = level
@@ -27,24 +28,11 @@ class FrameSkipWrapper(gym.Wrapper):
         for step in range(self.skip):
             if step > 0 and action != 5:
                 action = 0
-            obs, reward, done, truncated, info = self.env.step(action)
-            total_rewards += reward
+            obs, _, done, truncated, info = self.env.step(action)
+            total_rewards += self.reward_func()
             if done:
                 total_rewards -= 100
                 break
-        
-        lines = info['number_of_lines']
-        if self.lines < lines:
-            lines_cleared = lines - self.lines
-            self.lines = lines
-            self.lines_history.append(lines_cleared)
-            total_rewards += LINE_REWARDS[lines_cleared]
-            total_rewards += 0.76 * lines_cleared
-
-        blocks = sum(info["statistics"].values())
-        if self.blocks < blocks:
-            total_rewards += self.reward_func()
-            self.blocks = blocks
             
         return obs, total_rewards, done, truncated, info
     
@@ -67,23 +55,31 @@ class FrameSkipWrapper(gym.Wrapper):
         filled_above = np.maximum.accumulate(board != 0, axis=0)
         holes = np.sum((filled_above & (board == 0)))
         return holes * -0.36
+    
+    def line_reward(self, board):
+        lines = self.env.unwrapped._lines_being_cleared
+        if lines != self.lines_cleared:
+            self.lines_cleared = lines
+            self.lines += self.lines_cleared
+        return self.lines * 0.76
    
-    def fitness_function(self):
-        board = self.env.unwrapped._board
-        board[board == 239] = 0
+    def fitness_function(self, board):
         hp, bp = self.uneven_penalty(board)  # height penalty, bumpiness penalty
         hole_penalty = self.hole_penalty(board)
-        return hp + hole_penalty + bp
+        lines_r = self.line_reward(board)
+        return hp + lines_r + hole_penalty + bp
     
     def reward_func(self):
-        fitness_value = self.fitness_function()
+        board = self.env.unwrapped._board
+        board[board == 239] = 0
+        fitness_value = self.fitness_function(board)
         reward = fitness_value - self.fitness
         self.fitness = fitness_value
-        return reward
+        return round(reward, 2)
 
 
 class RecordVideo(gym.Wrapper):
-    def __init__(self, env, path: str, format: str, log_every: int = 100, episode = 0, recording = True):
+    def __init__(self, env, path: str, format: str, log_every: int = 100, episode = 0, recording = False):
         super().__init__(env)
         self.env = env
         self.path = path

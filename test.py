@@ -7,18 +7,18 @@ import matplotlib.pyplot as plt
 
 from tqdm import tqdm
 from model import UNREAL
-from optimizer import SharedRMSprop
+from optimizer import SharedRMSprop, SharedAdam
 from replay_buffer import ReplayBuffer
 from torch.distributions import Categorical
 from utils import make_env, pixel_diff, preprocessing, ensure_share_grads
 
 params = dict(
-    lr=0.00036,
+    lr=0.0003,
     unroll_steps=20,
-    beta=0.0113,
+    beta=0.04,
     gamma=0.99,
     hidden_size=256,
-    pc_weight=0.02335,
+    pc_weight=1.0,
 )
 
 device = torch.device("cpu")
@@ -51,7 +51,7 @@ if __name__ == "__main__":
         device=device,
     )
     local_model.train()
-    experience_replay = ReplayBuffer(500)
+    experience_replay = ReplayBuffer(2000)
 
     state, info = env.reset()
     state = preprocessing(state)

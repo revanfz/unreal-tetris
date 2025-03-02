@@ -195,7 +195,24 @@ class UNREAL(nn.Module):
             self.pc_layer = PixelControl(n_actions=n_actions, hidden_size=hidden_size)
         if self.use_rp:
             self.rp_layer = RewardPrediction(hidden_size=hidden_size)
+        self._initialize_weights()
         self.to(self.device)
+        
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear) or isinstance(m, nn.ConvTranspose2d):
+                nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.LSTMCell):
+                for name, param in m.named_parameters():
+                    if 'weight_ih' in name:
+                        nn.init.kaiming_uniform_(param.data, mode='fan_in', nonlinearity='relu')
+                    elif 'weight_hh' in name:
+                        nn.init.orthogonal_(param.data)
+                    elif 'bias' in name:
+                        nn.init.constant_(param.data, 0)
 
     def forward(
         self,

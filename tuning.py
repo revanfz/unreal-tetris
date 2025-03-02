@@ -1,9 +1,7 @@
 import os
-
 os.environ["OMP_NUM_THREADS"] = "1"
 
 import sys
-import time
 import torch
 import optuna
 import pickle
@@ -13,7 +11,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.multiprocessing as mp
 
-from tqdm import tqdm
 from model import UNREAL
 from typing import Union
 from replay_buffer import ReplayBuffer
@@ -48,6 +45,7 @@ def train(
     params: dict,
     global_model: UNREAL,
     optimizer: Union[SharedAdam, SharedRMSprop],
+    level: int,
     global_steps: Synchronized,
     global_rewards: Synchronized,
     global_blocks: Synchronized,
@@ -60,10 +58,9 @@ def train(
         env = make_env(
             resize=84,
             render_mode="rgb_array",
-            id="TetrisA-v2",
-            level=19,
+            id="TetrisA-v3",
+            level=level,
             skip=2,
-            reward_design="scoring",
         )
 
         local_model = UNREAL(
@@ -223,7 +220,8 @@ def train(
             # Penjumlahan loss a3c, pixel control, value replay dan reward prediction
             total_loss = a3c_loss + params["pc_weight"] * pc_loss + rp_loss + vr_loss
             total_loss.backward()
-            nn.utils.clip_grad_norm_(local_model.parameters(), params["grad_norm"])
+            if params["grad_norm"]:
+                nn.utils.clip_grad_norm_(local_model.parameters(), params["grad_norm"])
             ensure_share_grads(
                 local_model=local_model, global_model=global_model,
             )
@@ -248,13 +246,15 @@ def objective(trial: optuna.Trial):
         )
 
         params = {
-            "lr": trial.suggest_float("learning rate", 1e-4, 5e-3, log=True),
-            "pc_weight": trial.suggest_float("lambda pc", 0.01, 0.1, log=True),
-            "beta": trial.suggest_float("entropy coefficient", 5e-4, 1e-2, log=True),
-            "gamma": trial.suggest_categorical("discount factor", [0.95, 0.99]),
-            "grad_norm": trial.suggest_categorical("gradient clipping", [0.5, 40]),
-            # "gamma": 0.99,
-            "optimizer": "RMSProp",
+            "lr": trial.suggest_categorical("learning rate", [0.001, 0.0002, 0.0003, 0.0005]),
+            # "pc_weight": trial.suggest_float("lambda pc", 1e-4, 1e-2, log=True),
+            # "beta": trial.suggest_float("ent coeff", 5e-4, 1e-2, log=True),
+            "beta": trial.suggest_categorical("entropy coefficient", [0.001, 0.005, 0.01, 0.02, 0.04]),
+            # "grad_norm": trial.suggest_categorical("gradient clipping", [0.5, 40]),
+            "grad_norm": 40.0,
+            "optimizer": trial.suggest_categorical("optimizer", ["RMSProp", "Adam"]),
+            "gamma": 0.99,
+            "pc_weight": 1.0,
             "device": torch.device("cpu"),
             "hidden_size": 256,
             "n_actions": env.action_space.n,
@@ -280,6 +280,7 @@ def objective(trial: optuna.Trial):
             optimizer = SharedAdam(global_model.parameters(), lr=params["lr"])
         elif params["optimizer"] == "RMSProp":
             optimizer = SharedRMSprop(global_model.parameters(), lr=params["lr"])
+        optimizer.share_memory()
 
         processes = []
         global_rewards = mp.Value("f", 0)
@@ -299,7 +300,7 @@ def objective(trial: optuna.Trial):
         progress_process.start()
         processes.append(progress_process)
 
-        for rank in range(mp.cpu_count()):
+        for rank, level in enumerate([19, 18, 15, 12]):
             p = mp.Process(
                 target=train,
                 args=(
@@ -307,6 +308,7 @@ def objective(trial: optuna.Trial):
                     params,
                     global_model,
                     optimizer,
+                    level,
                     global_steps,
                     global_rewards,
                     global_blocks,
@@ -320,12 +322,13 @@ def objective(trial: optuna.Trial):
         for process in processes:
             process.join()
 
-        return (
-            global_rewards.value / global_tries.value,
-            global_blocks.value / global_tries.value,
-            global_lines.value,
-            global_tries.value
-        )
+        return (global_rewards.value, global_lines.value)
+        # return (
+            # global_rewards.value / global_tries.value,
+            # global_blocks.value / global_tries.value,
+            # global_lines.value,
+            # global_tries.value
+        # )
 
     except KeyboardInterrupt:
         raise KeyboardInterrupt("Tuning dihentikan.")
@@ -344,25 +347,26 @@ if __name__ == "__main__":
             engine_kwargs={"connect_args": {"timeout": 30}},
         )
         study = optuna.create_study(
-            study_name="UNREAL-tetris",
+            study_name="UNREAL-last",
             storage=storage,
             load_if_exists=True,
-            directions=["maximize", "maximize", "maximize", "minimize"],  # UNREAL
+            # directions=["maximize", "maximize", "maximize", "minimize"],  # UNREAL
+            directions=["maximize", "maximize"],  # UNREAL
         )
 
         if os.path.isfile("./tuning/sampler.pkl"):
             restored_sampler = pickle.load(open("tuning/sampler.pkl", "rb"))
             study.sampler = restored_sampler
 
-        n_trials = 30
+        n_trials = 15
 
         study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
 
         metrics = [
             (0, "rewards"),
-            (1, "blocks placed"),
-            (2, "lines cleared"),
-            (3, "game tries"),
+            # (1, "blocks placed"),
+            (1, "lines cleared"),
+            # (3, "game tries"),
         ]
 
         for index, metric_name in metrics:

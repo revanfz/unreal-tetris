@@ -1,9 +1,11 @@
+import time
 import torch
 import torch.nn.functional as F
 
 from model import UNREAL
-from utils import make_env, preprocessing, pixel_diff
+from torchvision import transforms
 from torch.distributions import Categorical
+from utils import make_env, preprocessing, pixel_diff
 
 # params = dict(
 #     lr=0.0005,
@@ -25,10 +27,9 @@ params = dict(
 device = torch.device("cpu")
 
 if __name__ == "__main__":
-    env = make_env(resize=84, render_mode="human", level=19, skip=2)
+    env = make_env(id="TetrisA-v3", resize=84, render_mode="human", level=10, skip=2)
     # checkpoint = torch.load("trained_models/UNREAL-cont.pt", weights_only=True)
-    checkpoint = torch.load("trained_models/UNREAL-cont_checkpoint.tar", weights_only=True)
-
+    checkpoint = torch.load("trained_models/UNREAL-cont-fine-tuning_checkpoint.tar", weights_only=True)
     local_model = UNREAL(
         n_inputs=(84, 84, 3),
         n_actions=env.action_space.n,
@@ -47,11 +48,14 @@ if __name__ == "__main__":
 
     while True:
         if done:
-            state, info = env.reset(seed=42)
+            blocks = 0
+            state, info = env.reset()
             state = preprocessing(state)
             hx = torch.zeros(1, params["hidden_size"]).to(device)
             cx = torch.zeros(1, params["hidden_size"]).to(device)
             eps_r = []
+            step = 0
+            ep_r = 0
         else:
             hx = hx.detach()
             cx = cx.detach()
@@ -61,23 +65,27 @@ if __name__ == "__main__":
         policy, value, hx, cx = local_model(state_tensor, action, reward, (hx, cx))
 
         dist = Categorical(probs=policy)
-        action = dist.sample()
+        # action = dist.sample()
         # if policy[0][1] >= 0.1 or policy[0][2] >= 0.1:
         # print("probs:", policy)
-        # action = policy.argmax().unsqueeze(0)
-
+        action = policy.argmax().unsqueeze(0)
+        # action = torch.tensor(env.action_space.sample()).unsqueeze(0)
+    
         next_state, reward, done, _, info = env.step(action.item())
-        # print(reward)
+        if reward != 0:
+            print(reward)
+
+        # if sum(info['statistics'].values()) > 1:
+        #     print(env.unwrapped._board)
+        #     break
+        curr_block = sum(info["statistics"].values())
+            
         next_state = preprocessing(next_state)
         pixel_change = pixel_diff(state, next_state)
         action = F.one_hot(action, num_classes=env.action_space.n).to(device)
         reward = torch.FloatTensor([[reward]]).to(device)
         state = next_state
+        step += 1
 
         if done:
-            # state, info = env.reset()
-            # state = preprocessing(state)
-            # hx = torch.zeros(1, params["hidden_size"]).to(device)
-            # cx = torch.zeros(1, params["hidden_size"]).to(device)
             print(info)
-            break

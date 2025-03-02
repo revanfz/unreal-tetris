@@ -1,3 +1,5 @@
 __pycache__
 tensorboard/**/events.out.tfevents.*
 **/videos
+img/appendix
+wandb

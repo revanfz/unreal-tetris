@@ -74,7 +74,7 @@ def make_env(
         #     disable_logger=True,
         # )
         env = RecordVideo(env, path, format, log_every=log_every, episode=episode)
-        record_statistics = True
+        # record_statistics = True
     if record_statistics:
         env = RecordEpisodeStatistics(env, buffer_length=num_games)
 
@@ -92,7 +92,8 @@ def ensure_share_grads(
     ):
         # for name, param in local_model.named_parameters():
         #     if param.grad is not None:
-        #         print(f"{name} grad norm: {param.grad.norm()}")
+        #         # print(f"{name} grad norm: {param.grad.norm()}")
+        #         pass
         #     else:
         #         print(f"{name} is none")
         if global_param.grad is not None:

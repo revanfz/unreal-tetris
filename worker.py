@@ -1,6 +1,5 @@
 import wandb
 import torch
-import numpy as np
 import torch.nn as nn
 import wandb.integration
 import wandb.integration.gym
@@ -18,6 +17,7 @@ from utils import ensure_share_grads, make_env, pixel_diff, preprocessing
 
 def worker(
     rank: int,
+    level: int,
     global_model: UNREAL,
     optimizer: SharedAdam,
     global_steps: Synchronized,
@@ -27,14 +27,14 @@ def worker(
     device: torch.device,
 ):
     try:
-        render_mode = "rgb_array" if rank else "human"
+        render_mode = "rgb_array"
         env = make_env(
             id="TetrisA-v3",
             resize=84,
             render_mode=render_mode,
-            level=19 - rank,
+            level=level,
             skip=2,
-            record=True if not rank else False,
+            # record=True if not rank else False,
             log_every=500,
             episode=global_episodes.value,
         )
@@ -58,10 +58,9 @@ def worker(
         prev_reward = torch.zeros(1, 1, device=device)
 
         if not rank:
-            tries = 0
-            wandb.tensorboard.patch(root_logdir=f"{params.log_path}/UNREAL-diverse", pytorch=True)
+            wandb.tensorboard.patch(root_logdir=f"{params.log_path}/UNREAL-cont-fine-tuning", pytorch=True)
             wandb.init(
-                project="UNREAL-diverse",
+                project="UNREAL-cont-fine-tuning",
                 config={
                     "learning_rate": params.lr,
                     "optimizer": params.optimizer,
@@ -81,8 +80,8 @@ def worker(
                 sync_tensorboard=True
             )
             wandb.watch(local_model, log="all", log_freq=params.save_interval)
-            ep_writer = SummaryWriter(f"{params.log_path}/UNREAL-diverse/episode")
-            game_writer = SummaryWriter(f"{params.log_path}/UNREAL-diverse/game")
+            ep_writer = SummaryWriter(f"{params.log_path}/UNREAL-cont-fine-tuning/episode")
+            game_writer = SummaryWriter(f"{params.log_path}/UNREAL-cont-fine-tuning/game")
             with torch.no_grad():
                 ep_writer.add_graph(
                     local_model,
@@ -100,7 +99,7 @@ def worker(
         done = True
         while not experience_replay._is_full():
             if done:
-                state, info = env.reset(seed=42+rank)
+                state, info = env.reset()
                 state = preprocessing(state)
                 hx = torch.zeros(1, params.hidden_size, device=device)
                 cx = torch.zeros(1, params.hidden_size, device=device)
@@ -143,7 +142,7 @@ def worker(
             episode_rewards = 0
 
             if done:
-                state, info = env.reset(seed=42+rank)
+                state, info = env.reset()
                 state = preprocessing(state)
                 hx = torch.zeros(1, params.hidden_size, device=device)
                 cx = torch.zeros(1, params.hidden_size, device=device)
@@ -189,21 +188,11 @@ def worker(
                             global_lines.value += info["number_of_lines"]
 
                     if not rank:
-                        key = "videos" if info["number_of_lines"] else "video"
                         game_writer.add_scalar(
                             f"Block placed",
                             sum(info["statistics"].values()),
                             global_episodes.value,
                         )
-                        if tries % 100 == 0 or info["number_of_lines"]:
-                            frames = np.array(env.env.frame_captured).transpose(0, 3, 1, 2)[::4]
-                            game_writer.add_video(
-                                f"{key}",
-                                torch.from_numpy(frames).unsqueeze(0),
-                                global_episodes.value,
-                                fps=30,
-                            )
-                        tries += 1
                     break
 
             # Bootstrapping
@@ -304,21 +293,21 @@ def worker(
                         "episodes": global_episodes.value,
                         "lines": global_lines.value,
                     },
-                    f"{params.model_path}/UNREAL-diverse_checkpoint.tar",
+                    f"{params.model_path}/UNREAL-cont-fine-tuning_checkpoint.tar",
                 )
 
         if not rank:
             torch.save(
-                global_model.state_dict(), f"{params.model_path}/UNREAL-diverse.pt"
+                global_model.state_dict(), f"{params.model_path}/UNREAL-cont-fine-tuning.pt"
             )
             torch.onnx.export(
                 global_model,
                 (state_tensor, prev_action, prev_reward, (hx, cx)),
-                f"{params.model_path}/UNREAL-diverse.onnx",
+                f"{params.model_path}/UNREAL-cont-fine-tuning.onnx",
                 input_names=["input"],
             )
             wandb.save(
-                "UNREAL-diverse.onnx",
+                "UNREAL-cont-fine-tuning.onnx",
             )
         print(f"Pelatihan agen {rank} selesai")
 
@@ -344,7 +333,7 @@ def worker(
                     "episodes": global_episodes.value,
                     "lines": global_lines.value,
                 },
-                f"{params.model_path}/UNREAL-diverse_checkpoint.tar",
+                f"{params.model_path}/UNREAL-cont-fine-tuning_checkpoint.tar",
             )
             ep_writer.close()
             game_writer.close()

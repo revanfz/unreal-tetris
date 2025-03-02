@@ -30,7 +30,7 @@ def get_args():
         "--beta", type=float, default=0.00318, help="entropy coefficient"
     )
     parser.add_argument("--pc-weight", type=float, default=0.05478, help="task weight")
-    parser.add_argument("--grad-norm", type=float, default=40, help="Gradient norm clipping")
+    parser.add_argument("--grad-norm", type=float, default=40.0, help="Gradient norm clipping")
     parser.add_argument(
         "--unroll-steps",
         type=int,
@@ -44,7 +44,7 @@ def get_args():
         help="jumlah episode sebelum menyimpan checkpoint model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=1e7, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=4e7, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
@@ -123,7 +123,7 @@ def train(params: argparse.Namespace) -> None:
 
         if opt.resume_training:
             if os.path.isdir(opt.model_path):
-                file_ = f"{opt.model_path}/UNREAL-diverse_checkpoint.tar"
+                file_ = f"{opt.model_path}/UNREAL-cont-fine-tuning_checkpoint.tar"
                 if os.path.isfile(file_):
                     load_model = True
                     checkpoint = torch.load(file_, weights_only=True, map_location=torch.device("cpu"))
@@ -162,13 +162,14 @@ def train(params: argparse.Namespace) -> None:
             ),
         )
         progress_process.start()
-        processes.append(progress_process) 
+        processes.append(progress_process)
 
-        for rank in range(params.num_agents):
+        for rank, level in enumerate([19, 18, 15, 12]):
             process = mp.Process(
                 target=worker,
                 args=(
                     rank,
+                    level,
                     global_model,
                     optimizer,
                     global_steps,
