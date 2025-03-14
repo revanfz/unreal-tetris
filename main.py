@@ -1,6 +1,7 @@
 import os
 os.environ["OMP_NUM_THREADS"] = "1"
 
+import wandb
 import torch
 import random
 import argparse
@@ -23,13 +24,17 @@ def get_args():
         """
     )
     parser.add_argument("--lr", type=float, default=0.00012, help="Learning rate")
+    # parser.add_argument("--lr", type=float, default=0.0002, help="Learning rate")
     parser.add_argument(
         "--gamma", type=float, default=0.95, help="discount factor for rewards"
+        # "--gamma", type=float, default=0.99, help="discount factor for rewards"
     )
     parser.add_argument(
         "--beta", type=float, default=0.00318, help="entropy coefficient"
+        # "--beta", type=float, default=0.04, help="entropy coefficient"
     )
     parser.add_argument("--pc-weight", type=float, default=0.05478, help="task weight")
+    # parser.add_argument("--pc-weight", type=float, default=1.0, help="task weight")
     parser.add_argument("--grad-norm", type=float, default=40.0, help="Gradient norm clipping")
     parser.add_argument(
         "--unroll-steps",
@@ -44,7 +49,7 @@ def get_args():
         help="jumlah episode sebelum menyimpan checkpoint model",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=4e7, help="Maksimal step pelatihan"
+        "--max-steps", type=int, default=5e7, help="Maksimal step pelatihan"
     )
     parser.add_argument(
         "--hidden-size", type=int, default=256, help="Jumlah hidden size"
@@ -163,6 +168,8 @@ def train(params: argparse.Namespace) -> None:
         )
         progress_process.start()
         processes.append(progress_process)
+
+        wandb.setup()
 
         for rank, level in enumerate([19, 18, 15, 12]):
             process = mp.Process(

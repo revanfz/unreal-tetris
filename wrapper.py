@@ -33,10 +33,15 @@ class FrameSkipWrapper(gym.Wrapper):
             if done:
                 total_rewards -= 100
                 break
-            
+        
         return obs, total_rewards, done, truncated, info
-    
 
+    def process_board(self):
+        board_copy = self.env.unwrapped._board
+        board_copy[board_copy == 239] = 0
+        board_copy[board_copy != 0] = 1
+        return board_copy
+    
     def reset(self, seed=None, options=None):
         self.lines = 0
         self.blocks = 1
@@ -57,10 +62,11 @@ class FrameSkipWrapper(gym.Wrapper):
         return holes * -0.36
     
     def line_reward(self, board):
-        lines = self.env.unwrapped._lines_being_cleared
-        if lines != self.lines_cleared:
-            self.lines_cleared = lines
-            self.lines += self.lines_cleared
+        lines_cleared = np.sum(np.all(board == 1, axis=1))
+        if lines_cleared > self.lines_cleared:
+            self.lines += lines_cleared
+            self.lines_history.append(lines_cleared)
+        self.lines_cleared = lines_cleared
         return self.lines * 0.76
    
     def fitness_function(self, board):
@@ -70,8 +76,7 @@ class FrameSkipWrapper(gym.Wrapper):
         return hp + lines_r + hole_penalty + bp
     
     def reward_func(self):
-        board = self.env.unwrapped._board
-        board[board == 239] = 0
+        board = self.process_board()
         fitness_value = self.fitness_function(board)
         reward = fitness_value - self.fitness
         self.fitness = fitness_value
@@ -79,7 +84,7 @@ class FrameSkipWrapper(gym.Wrapper):
 
 
 class RecordVideo(gym.Wrapper):
-    def __init__(self, env, path: str, format: str, log_every: int = 100, episode = 0, recording = False):
+    def __init__(self, env, path: str, format: str, log_every: int = 100, episode = 0, recording = True):
         super().__init__(env)
         self.env = env
         self.path = path
@@ -113,7 +118,7 @@ class RecordVideo(gym.Wrapper):
                     if self.format == "gif":
                         clip.write_gif(filename)
                     else:
-                        clip.write_videofile(filename)
+                        clip.write_videofile(filename, logger=None)
             else:
                 raise error.Error(
                     f"Invalid recording format. Supported are mp4, avi, webm, ogv, gif"

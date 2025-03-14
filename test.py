@@ -30,6 +30,8 @@ if __name__ == "__main__":
         level=19,
         skip=2,
         id="TetrisA-v3",
+        # grayscale=True,
+        # framestack=4
     )
 
     # checkpoint = torch.load(f"./trained_models/UNREAL_checkpoint.tar", weights_only=True)
@@ -53,7 +55,7 @@ if __name__ == "__main__":
     local_model.train()
     experience_replay = ReplayBuffer(2000)
 
-    state, info = env.reset()
+    state, info = env.reset(seed=1)
     state = preprocessing(state)
     prev_action = F.one_hot(torch.LongTensor([0]), env.action_space.n).to(device)
     prev_reward = torch.zeros(1, 1).to(device)
@@ -83,7 +85,7 @@ if __name__ == "__main__":
         cx = cx.detach()
 
         if done:
-            state, info = env.reset()
+            state, info = env.reset(seed=42)
             state = preprocessing(state)
             hx = torch.zeros(1, params["hidden_size"]).to(device)
             cx = torch.zeros(1, params["hidden_size"]).to(device)

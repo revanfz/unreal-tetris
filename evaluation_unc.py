@@ -29,15 +29,15 @@ def get_args():
 
 
 params = get_args()
-total_test_case = 1
-data_dir = "./UNREAL-eval/uncertainty/csv"
+total_test_case = 10
+data_dir = "./UNREAL-eval/transfer/csv"
 
 if __name__ == "__main__":
     if not os.path.isdir(data_dir):
         os.makedirs(data_dir, exist_ok=True)
 
     device = torch.device("cpu")
-    checkpoint = torch.load("trained_models/UNREAL-cont.pt", weights_only=True, map_location=torch.device("cpu"))
+    checkpoint = torch.load("trained_models/UNREAL-cont-fine-tuning.pt", weights_only=True, map_location=torch.device("cpu"))
 
     model = UNREAL(
         n_inputs=(84, 84, 3),
@@ -48,7 +48,7 @@ if __name__ == "__main__":
     model.load_state_dict(checkpoint)
     model.eval()
     for test_case in range(params.start_case - 1, total_test_case):
-        video_path = f"./UNREAL-eval/uncertainty/videos/{test_case+1}"
+        video_path = f"./UNREAL-eval/transfer/videos/{test_case+1}"
         data_path = f"{data_dir}"
 
         if not os.path.isdir(video_path):
@@ -60,12 +60,13 @@ if __name__ == "__main__":
             record=True,
             resize=84,
             path=video_path,
-            level=9 + test_case,
+            level=10 + test_case,
             num_games=params.num_tries,
             id="TetrisA-v3",
-            render_mode="human",
+            render_mode="rgb_array",
             log_every=1,
             skip=2,
+            record_statistics=True, 
         )
 
         data = {
@@ -135,5 +136,5 @@ if __name__ == "__main__":
         env.close()
 
         df = pd.DataFrame(data)
-        pp(df)
         df.to_csv(f"{data_path}/{test_case+1}.csv", index=False)
+        pp(df)

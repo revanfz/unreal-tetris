@@ -4,6 +4,7 @@ import torch.nn as nn
 import wandb.integration
 import wandb.integration.gym
 import torch.nn.functional as F
+import wandb.wandb_run
 
 from model import UNREAL
 from argparse import Namespace
@@ -18,6 +19,7 @@ from utils import ensure_share_grads, make_env, pixel_diff, preprocessing
 def worker(
     rank: int,
     level: int,
+    # logger: wandb.wandb_run.Run,
     global_model: UNREAL,
     optimizer: SharedAdam,
     global_steps: Synchronized,
@@ -56,46 +58,7 @@ def worker(
 
         prev_action = F.one_hot(torch.tensor([0]).long(), env.action_space.n).to(device)
         prev_reward = torch.zeros(1, 1, device=device)
-
-        if not rank:
-            wandb.tensorboard.patch(root_logdir=f"{params.log_path}/UNREAL-cont-fine-tuning", pytorch=True)
-            wandb.init(
-                project="UNREAL-cont-fine-tuning",
-                config={
-                    "learning_rate": params.lr,
-                    "optimizer": params.optimizer,
-                    "unroll_steps": params.unroll_steps,
-                    "pc_weight": params.pc_weight,
-                    "grad_norm": params.grad_norm,
-                    "hidden_size": params.hidden_size,
-                    "num_agents": params.num_agents,
-                    "gamma": global_model.gamma,
-                    "beta": global_model.beta,
-                    "n_actions": global_model.n_actions,
-                    "input_dim": global_model.n_inputs,
-                },
-                id=f"UNREAL",
-                resume="allow",
-                name=f"UNREAL",
-                sync_tensorboard=True
-            )
-            wandb.watch(local_model, log="all", log_freq=params.save_interval)
-            ep_writer = SummaryWriter(f"{params.log_path}/UNREAL-cont-fine-tuning/episode")
-            game_writer = SummaryWriter(f"{params.log_path}/UNREAL-cont-fine-tuning/game")
-            with torch.no_grad():
-                ep_writer.add_graph(
-                    local_model,
-                    (
-                        torch.zeros(1, 3, 84, 84).to(device),
-                        prev_action,
-                        prev_reward,
-                        (
-                            torch.zeros(1, params.hidden_size, device=device),
-                            torch.zeros(1, params.hidden_size, device=device),
-                        ),
-                    ),
-                )
-
+        
         done = True
         while not experience_replay._is_full():
             if done:
@@ -122,6 +85,29 @@ def worker(
             state = next_state
             prev_action = F.one_hot(action, num_classes=env.action_space.n).to(device)
             prev_reward = torch.tensor([[reward]], device=device).float()
+        
+        run = wandb.init(
+            project="UNREAL-tetris",
+            id=f"tetris-{level}",
+            # entity="revanfz",
+            resume="allow",
+            group="UNREAL-tetris-transfer",
+            config={
+                "learning_rate": params.lr,
+                "optimizer": params.optimizer,
+                "unroll_steps": params.unroll_steps,
+                "pc_weight": params.pc_weight,
+                "grad_norm": params.grad_norm,
+                "hidden_size": params.hidden_size,
+                "num_agents": params.num_agents,
+                "gamma": global_model.gamma,
+                "beta": global_model.beta,
+                "n_actions": global_model.n_actions,
+                "input_dim": global_model.n_inputs,
+            }
+        )
+
+        run.watch(local_model, log='all', log_freq=params.save_interval)
 
         done = True
         current_episodes = 0
@@ -187,12 +173,9 @@ def worker(
                         with global_lines.get_lock():
                             global_lines.value += info["number_of_lines"]
 
-                    if not rank:
-                        game_writer.add_scalar(
-                            f"Block placed",
-                            sum(info["statistics"].values()),
-                            global_episodes.value,
-                        )
+                    run.log({
+                        f"Level-{level}/Block placed":sum(info["statistics"].values()),
+                    })
                     break
 
             # Bootstrapping
@@ -255,30 +238,21 @@ def worker(
             ensure_share_grads(local_model=local_model, global_model=global_model)
             optimizer.step()
 
-            if not rank:
-                with global_lines.get_lock():
-                    ep_writer.add_scalar(f"Total Loss", total_loss, global_episodes.value)
-                    ep_writer.add_scalar(f"Rewards", episode_rewards, global_episodes.value)
-                    ep_writer.add_scalar(
-                        f"Total lines cleared", global_lines.value, global_episodes.value
-                    )
-                    ep_writer.add_scalar(
-                        f"A3C Loss", a3c_loss.detach().cpu().numpy(), global_episodes.value
-                    )
-                    ep_writer.add_scalar(
-                        f"PC Loss", pc_loss.detach().cpu().numpy(), global_episodes.value
-                    )
-                    ep_writer.add_scalar(
-                        f"RP Loss", rp_loss.detach().cpu().numpy(), global_episodes.value
-                    )
-                    ep_writer.add_scalar(
-                        f"VR Loss", vr_loss.detach().cpu().numpy(), global_episodes.value
-                    )
-                    ep_writer.add_scalar(
-                        f"Entropy",
-                        entropies.detach().mean().cpu().numpy(),
-                        global_episodes.value,
-                    )
+            with global_lines.get_lock():
+                run.log({
+                    f"Total Loss": total_loss,
+                    f"Rewards": episode_rewards,
+                    f"A3C Loss": a3c_loss.detach().cpu().numpy(),
+                    f"PC Loss": pc_loss.detach().cpu().numpy(),
+                    f"RP Loss": rp_loss.detach().cpu().numpy(),
+                    f"VR Loss": vr_loss.detach().cpu().numpy(),
+                    f"Entropy": entropies.detach().mean().cpu().numpy()
+                }, commit=False)
+
+                if not rank:
+                    run.log({
+                        f"Total lines cleared": global_lines.value,
+                    }, commit = False)
 
             current_episodes += 1
             with global_episodes.get_lock():
@@ -335,7 +309,5 @@ def worker(
                 },
                 f"{params.model_path}/UNREAL-cont-fine-tuning_checkpoint.tar",
             )
-            ep_writer.close()
-            game_writer.close()
-            wandb.finish()
+        run.finish()
         print(f"\tProses pelatihan agen {rank} dihentikan")

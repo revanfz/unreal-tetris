@@ -60,7 +60,7 @@ def make_env(
     env = JoypadSpace(env, SIMPLE_MOVEMENT)
 
     if grayscale:
-        env = GrayscaleObservation(env, keep_dim=True)
+        env = GrayscaleObservation(env, keep_dim=False)
     if resize:
         env = ResizeObservation(env, (resize, resize))
     if framestack:
